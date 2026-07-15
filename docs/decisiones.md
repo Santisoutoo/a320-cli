@@ -61,7 +61,18 @@ La capa `api::Sim` valida los nombres de control/variable contra el **catálogo 
 - `read_ecam()` y las llamadas de fallos (`inject_failure`/`clear_failure`/`list_failures`) **no** se implementan: son de Fase 2 (#14, #15). Se les deja sitio (el enum de errores y la fachada no cierran la puerta) pero no se stubbean, según indica el propio issue #9.
 - `list_controls()` del contrato se pospone; en Fase 1 el descubrimiento lo cubre `list_variables()` (único listado exigido por los criterios de #9).
 
-### D-009 — Bindings PyO3: crate `bindings/` como workspace independiente, empaquetado con maturin
+### D-009 — Catálogo curado de controles (`list_controls`) y validación de rango
+**Fecha**: 2026-07-15 (Fase 1, issue #10)
+`list_controls()` es la mitad curada del descubrimiento (frente a `list_variables()`, que vuelca el registro crudo). Vive en `core-rs/src/controls.rs`: una constante `CATALOG` **escrita a mano** que mapea nombre amigable → LVAR con metadatos (tipo bool/enum/float, valores válidos, descripción de una línea, grupo por sistema, dominio cabina/mundo). Alcance de Fase 1: panel eléctrico (baterías, ext pwr, APU gen, bus tie, generadores). Los LVAR se tomaron del `A320ElectricalOverheadPanel::new` de FBW y del `ExternalPowerSource`.
+**Decisiones de diseño**:
+- **Cabina vs mundo** (criterio del issue): se distingue con el enum `ControlDomain` (`Cockpit`/`World`). El único fake de mundo de Fase 1 es `EXT_PWR_AVAIL:1` (simula el GPU enchufado); el resto son pulsadores de cabina.
+- **`set` resuelve nombre amigable *y* LVAR crudo**: `set("bat_1", 1.0)` y `set("OVHD_ELEC_BAT_1_PB_IS_AUTO", 1.0)` son equivalentes. Aceptar el LVAR además del nombre amigable mantiene compatible el camino de escritura de #9 y no rompe los tests existentes.
+- **Validación en capas**: si el control está en el catálogo, `set` valida el valor contra sus valores válidos (un booleano rechaza cualquier cosa que no sea 0/1) antes de escribir; si no está catalogado, se conserva el comportamiento de #9 (solo finito + existe en el registro). Así la validación de rango del issue #10 convive con la escritura de variables crudas no curadas.
+- **`ApiError` no se extendió**: el criterio permitía extenderlo "si hace falta". El valor fuera de rango reutiliza `ApiError::BadValue { name, value, reason }`, cuyo campo `reason` ya transporta el motivo legible ("must be 0 (off) or 1 (on)", "must be within [min, max]"). No hacía falta una variante nueva.
+- **Test anti-drift**: `every_catalog_lvar_is_registered_after_a_tick` comprueba que cada LVAR del catálogo aparece en el registro tras un tick; caza typos en el catálogo y renombrados del vendor upstream.
+Esto cierra la desviación anotada en D-008 ("`list_controls()` se pospone; en Fase 1 lo cubre `list_variables()`").
+
+### D-010 — Bindings PyO3: crate `bindings/` como workspace independiente, empaquetado con maturin
 **Fecha**: 2026-07-15 (Fase 1, issue #11)
 El crate `bindings/` (`cdylib` + `rlib`, lib `a320_sim`) expone `api::Sim` como clase Python síncrona vía **PyO3 0.25** (abi3-py39; wheel único válido para CPython ≥ 3.9). Por el FFI solo cruzan `f64`/`bool`/`str`/list/dict; ningún tipo de FBW se filtra. Los `ApiError` afloran como excepciones Python (`SimError` base, con subtipos `UnknownControlError` y `BadValueError`, mensaje del `Display`), nunca panics.
 
