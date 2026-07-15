@@ -56,6 +56,12 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// Duración del tick de inicialización (ver [`Runtime::initialize`]). Un
+    /// solo tick basta para que las máquinas de estado transicionen fuera de su
+    /// estado de arranque; 100 ms es un delta nominal y no acumula ningún
+    /// retardo (todos los controles están en OFF durante la inicialización).
+    const INIT_TICK: Duration = Duration::from_millis(100);
+
     /// Crea un runtime en el `start_state` dado.
     pub fn new(start_state: StartState) -> Self {
         let mut store = VariableStore::new();
@@ -75,7 +81,50 @@ impl Runtime {
         // Deja el store en un estado de mundo válido ya antes del primer tick
         // (p. ej. para leer variables sin haber ticado todavía).
         runtime.environment.write_all(&mut runtime.store);
+        // Tick de inicialización con los controles en su default (todo OFF) para
+        // que las máquinas de estado internas del avión —que no viven en el store
+        // y no son sembrables (D-007)— arranquen en su estado coherente antes de
+        // que el caller pueda escribir nada. Ver D-012 y `initialize`.
+        runtime.initialize();
         runtime
+    }
+
+    /// Tick de inicialización: avanza la simulación **un** tick con los controles
+    /// en su default (cold & dark, todo OFF) y luego **restaura el reloj a 0**.
+    ///
+    /// ## Por qué hace falta (issue #39 / D-012)
+    ///
+    /// Algunos subsistemas guardan estado en máquinas de estado privadas del
+    /// avión (no en el store, luego no sembrables — D-007) cuya transición
+    /// inicial depende de leer sus controles en OFF durante el primer tick. El
+    /// caso de referencia es el `BatteryChargeLimiter`
+    /// (`electrical/battery_charge_limiter.rs`): arranca en `State::Open`
+    /// (`:25`) y la única vía **robusta** hacia el contactor cerrado en tierra es
+    /// `Open -> Off -> Closed::from_off()` (`:176`), que exige que el pulsador de
+    /// batería se lea en OFF al menos un tick para pasar por `Off`. Si el caller
+    /// escribe `BAT_x_PB_IS_AUTO=1` **antes** del primer tick, el BCL evalúa en
+    /// `Open` con el pulsador ya en AUTO y ninguna condición de `should_close`
+    /// (`:243`) puede cumplirse en cold & dark: la rama de tierra
+    /// (`on_ground_at_low_speed_with_unpowered_ac_buses`, `:525`) exige
+    /// `lgciu1.left_and_right_gear_compressed`, que devuelve `false` con el
+    /// LGCIU sin alimentar (`landing_gear/mod.rs:518`, `self.is_powered && …`);
+    /// y la rama de carga exige el bat bus por encima de 27 V (`:298`), que está
+    /// muerto precisamente porque el contactor no cierra. El BCL se queda en
+    /// `Open` **para siempre** y el DC BAT bus nunca se alimenta.
+    ///
+    /// El culpable es estado privado del avión, no una variable del store: no se
+    /// puede sembrar. El único resorte disponible es avanzar la simulación una
+    /// vez con los controles en default —exactamente lo que hacía el patrón
+    /// "tica primero" que sí funcionaba—, dejando el BCL en `Off` y listo para
+    /// cerrar cuando el caller ponga las baterías en AUTO.
+    ///
+    /// Restaurar el reloj a 0 preserva la semántica de "sim_time real y monótono
+    /// desde 0" y no altera el cold & dark de D-007: tras el tick todo sigue en
+    /// default y sin alimentar (los buses de la red siguen muertos), solo que las
+    /// máquinas de estado internas ya están inicializadas.
+    fn initialize(&mut self) {
+        self.tick(Self::INIT_TICK);
+        self.sim_time = 0.0;
     }
 
     /// Acceso de solo lectura al estado del mundo exterior.
@@ -252,6 +301,32 @@ mod tests {
         assert!((rt.read_by_name("AMBIENT TEMPERATURE") - (-10.0)).abs() < 1e-6);
         assert_eq!(rt.read_by_name("SIM ON GROUND"), 1.0); // sigue en tierra
         assert_eq!(rt.read_by_name("PLANE ALT ABOVE GROUND"), 0.0); // coherente
+    }
+
+    /// Regresión del issue #39: escribir los pulsadores de batería **antes** de
+    /// cualquier tick del caller debe comportarse igual que escribirlos después
+    /// de un tick. Sin el tick de inicialización de `Runtime::new`, el
+    /// `BatteryChargeLimiter` evaluaba su primer tick en `Open` con el pulsador
+    /// ya en AUTO y quedaba abierto para siempre (ver D-012).
+    #[test]
+    fn writes_before_the_first_tick_do_not_wedge_the_battery_contactor() {
+        let mut rt = Runtime::apron_cold_and_dark();
+
+        // Caso B del issue: set como PRIMERA operación, sin ningún tick previo.
+        rt.write_by_name(BAT_1_PB_IS_AUTO, 1.0);
+        rt.write_by_name(BAT_2_PB_IS_AUTO, 1.0);
+        rt.run(2.0, 5.0); // mismo settling que el caso A
+
+        // Los pulsadores no se machacan...
+        assert_eq!(rt.read_by_name(BAT_1_PB_IS_AUTO), 1.0);
+        assert_eq!(rt.read_by_name(BAT_2_PB_IS_AUTO), 1.0);
+        // ...y el DC BAT bus cobra vida, como en el caso "tick primero".
+        assert!(
+            is_true(rt.read_by_name(DC_BAT_BUS_POWERED)),
+            "DC BAT debería alimentarse aunque el set llegue antes del primer tick"
+        );
+        // El tick de inicialización no adelanta el reloj del caller.
+        assert!((rt.sim_time() - 2.0).abs() < 1e-9, "sim_time = {}", rt.sim_time());
     }
 
     #[test]

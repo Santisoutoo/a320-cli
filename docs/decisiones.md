@@ -97,6 +97,26 @@ El REPL humano (`cli/`, paquete `a320_cli`) se construye sobre la **stdlib**: `c
 - **`watch` consciente del TTY**: en un terminal real redibuja las mismas líneas en el sitio (cursor-up + `\033[K`) a ~5 Hz; cuando `stdout` está redirigido (captura/automatización) cae a una línea de log por refresco, sin secuencias ANSI, para que las transiciones se lean limpias. Sale con `Ctrl+C` (KeyboardInterrupt) sin abandonar el REPL. El paso a ~5 Hz (`step 200 ms` + `sleep 0.2 s`) reproduce el patrón de settling del core, así que se ve al DC BAT y a la red AC cobrar vida en tiempo casi real.
 - **Empaquetado**: `pip install -e cli/` (setuptools, paquete plano `a320_cli`), console-script `a320-cli` y `python -m a320_cli`. Depende de `a320-sim` (instalado antes desde `bindings/`, no está en PyPI); pip la da por satisfecha si ya está en el venv. GPLv3 por enlazar (vía la extensión) con el vendor de FBW.
 
+### D-012 — Tick de inicialización en `Runtime::new` (refinamiento de D-007; issue #39)
+**Fecha**: 2026-07-15 (Fase 1, issue #39)
+Escribir los pulsadores de batería **antes** del primer tick dejaba el contactor de batería abierto **para siempre** (el DC BAT bus nunca se alimentaba, sin importar cuánto settling ni re-escrituras). El patrón "tica primero y luego escribe" (el de los tests de integración) funcionaba; el REPL y el MCP, que arrancan en t=0 y cuyo primer comando puede ser `set bat_1 1`, caían de lleno en el caso roto.
+
+**Causa raíz** (estado privado del avión, no una variable del store): el `BatteryChargeLimiter` (`fbw-common/src/wasm/systems/systems/src/electrical/battery_charge_limiter.rs`) arranca en `State::Open` (`:25`, con comentario upstream reconociendo que ese estado inicial no vale para todos los arranques). En cold & dark headless, **ninguna** condición de `Open::should_close` (`:243`) puede llegar a cumplirse:
+- La rama de tierra (`on_ground_at_low_speed_with_unpowered_ac_buses`, `:525`) exige `lgciu1.left_and_right_gear_compressed`, y el LGCIU sin alimentar devuelve `false` (`landing_gear/mod.rs:518`: `self.is_powered && …`).
+- La rama de carga (`update_begin_charging_cycle_delay`, `:298`) exige el bat bus por encima de 27 V — muerto precisamente porque el contactor no cierra (pescadilla que se muerde la cola).
+- La rama de APU exige el APU master ON.
+
+La única vía real hacia `Closed` en tierra es `Open -> Off -> Closed::from_off()` (`:176`): que el pulsador se **lea en OFF al menos un tick** (transición a `Off`, `:332`) y después pase a AUTO (1 s de startup delay, `:176`). Con el patrón "tick primero" eso ocurre de forma natural; si el caller escribe `OVHD_ELEC_BAT_x_PB_IS_AUTO=1` antes del primer tick, el BCL nunca pisa `Off` y queda atascado en `Open` sin salida. Re-escribir el LVAR no ayuda: el latch es la máquina de estados privada, no la variable.
+
+**Fix elegido**: un **tick de inicialización dentro de `Runtime::new`** (`core-rs/src/runtime.rs`, `Runtime::initialize`): un único tick de 100 ms con todos los controles en su default (OFF) ejecutado antes de que el caller pueda escribir nada, y después `sim_time` restaurado a 0. La alternativa del issue (sembrar las variables culpables en el perfil de arranque, la vía preferida por D-007) **no es aplicable aquí**: el estado latcheado es un enum privado del avión que no vive en el store — no hay variable que sembrar. El tick de init es exactamente el resorte que el propio comentario upstream (`:21-24`) echa en falta ("when an initialisation phase is added…"), aplicado desde nuestro lado sin tocar el vendor.
+
+**Efectos y semántica**:
+- `sim_time` queda en **0** tras `new()`: el reloj del caller no se adelanta y "tiempo real y monótono desde 0" se conserva. El avión ve dos ticks con `simulation_time=0` (el de init y el primero del caller); todo el razonamiento temporal de los sistemas usa `delta`, no el tiempo absoluto, así que es inocuo.
+- El cold & dark de D-007 **no cambia**: tras el tick de init todo sigue en default y la red sigue muerta; lo único que cambia es que las máquinas de estado internas ya han hecho su primera transición coherente con "todo OFF". Los tests existentes pasan sin modificar.
+- Se elige 100 ms (delta nominal); ningún retardo interno acumula nada relevante durante la init porque todos los controles están en OFF.
+
+Regresión cubierta por `writes_before_the_first_tick_do_not_wedge_the_battery_contactor` (`core-rs/src/runtime.rs`): el caso B del issue (set antes de todo tick) debe comportarse como el caso A (tick primero).
+
 ## Abiertas
 
 *(ninguna)*
