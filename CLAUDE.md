@@ -142,6 +142,17 @@ Ground truth de procedimientos (failure → respuesta ECAM correcta → acciones
 
 Regla general: antes de bucear en el monorepo de FBW desde la conversación principal, delega la búsqueda en `fbw-scout` — el monorepo es enorme y contamina el contexto.
 
+### Code graph (codebase-memory-mcp)
+
+El repo está indexado en el knowledge graph del servidor MCP `codebase-memory-mcp`, en dos proyectos:
+
+- `C-Users-santi-Documents-personal_projects-a320-cli` — el código propio (core-rs, scripts, docs).
+- `a320-cli-fbw-vendor` — el vendor completo de FBW (`core-rs/vendor/aircraft`; el indexador excluye `vendor/` del proyecto principal, por eso va aparte).
+
+Para explorar código usa PRIMERO el grafo en vez de leer archivos enteros — especialmente en el vendor de FBW: `search_graph` (encontrar símbolos), `get_code_snippet` (leer solo la definición exacta), `trace_path` (cadenas de llamadas), `search_code` (grep aumentado) y `get_architecture`. Esto aplica también al subagente `fbw-scout`.
+
+Re-indexar (`detect_changes` → `index_repository`) tras cambios grandes en `core-rs/` o si se actualiza el pin del submódulo de FBW (en ese caso, re-indexar `a320-cli-fbw-vendor` apuntando a `core-rs/vendor/aircraft`).
+
 ### Recordatorios operativos
 
 - **Compilar siempre nativo.** Nunca el target WASM de FBW; si algo arrastra `msfs-rs` o wasm-bindgen al build nativo, eso es un bug de decoupling, no algo a instalar.
