@@ -11,7 +11,8 @@
 //! - [`Sim::step`] / [`Sim::run`] — avanzar el tiempo.
 //! - [`Sim::set_environment`] — el mundo exterior (issue #8).
 //! - [`Sim::snapshot`] — volcado completo del estado.
-//! - [`Sim::list_variables`] — descubrimiento.
+//! - [`Sim::list_variables`] — descubrimiento crudo (todo el registro).
+//! - [`Sim::list_controls`] — descubrimiento curado (catálogo de controles, #10).
 //!
 //! `read_ecam()` y la inyección/limpieza de fallos son de **Fase 2** (#14, #15):
 //! se les deja sitio (los errores y la fachada no cierran la puerta), pero no se
@@ -22,6 +23,7 @@ use std::fmt;
 
 use systems::simulation::StartState;
 
+use crate::controls::{self, Control};
 use crate::runtime::Runtime;
 
 /// Errores de la API, tipados y con mensaje útil: un REPL y un LLM necesitan
@@ -97,9 +99,20 @@ impl Sim {
 
     /// Actúa un control escribiendo su variable de entrada.
     ///
-    /// Errores: [`ApiError::BadValue`] si el valor no es finito;
-    /// [`ApiError::UnknownControl`] si el nombre no está en el catálogo (no se
-    /// acuña un identificador nuevo en ese caso).
+    /// `control` puede ser un **nombre amigable** del catálogo (p. ej. `bat_1`)
+    /// o el **LVAR** subyacente (`OVHD_ELEC_BAT_1_PB_IS_AUTO`); ambos resuelven a
+    /// la misma entrada. La resolución es:
+    ///
+    /// 1. Si está en el catálogo curado ([`crate::controls`]), el valor se
+    ///    valida contra sus valores válidos (bool/enum/rango) y se escribe en su
+    ///    LVAR. Un valor fuera de rango se rechaza con [`ApiError::BadValue`].
+    /// 2. Si no, se acepta como variable cruda del registro (compatibilidad con
+    ///    la Fase 1, #9): solo se valida que sea finita y que el nombre exista.
+    ///
+    /// Errores: [`ApiError::BadValue`] si el valor no es finito o está fuera de
+    /// los valores válidos del control; [`ApiError::UnknownControl`] si el nombre
+    /// no es ni un control del catálogo ni una variable conocida (no se acuña un
+    /// identificador nuevo en ese caso).
     pub fn set(&mut self, control: &str, value: f64) -> Result<(), ApiError> {
         if !value.is_finite() {
             return Err(ApiError::BadValue {
@@ -108,6 +121,22 @@ impl Sim {
                 reason: "value must be finite (not NaN or infinity)".to_owned(),
             });
         }
+
+        // 1. Control del catálogo (por nombre amigable o por LVAR): validación
+        //    de rango y escritura en el LVAR curado.
+        if let Some(entry) = controls::resolve(control) {
+            if let Err(reason) = entry.valid.check(value) {
+                return Err(ApiError::BadValue {
+                    name: control.to_owned(),
+                    value,
+                    reason,
+                });
+            }
+            self.runtime.write_by_name(entry.lvar, value);
+            return Ok(());
+        }
+
+        // 2. Variable cruda no catalogada: validación mínima contra el registro.
         if !self.is_known(control) {
             return Err(ApiError::UnknownControl {
                 name: control.to_owned(),
@@ -161,9 +190,19 @@ impl Sim {
         self.runtime.store().snapshot()
     }
 
-    /// Nombres de todas las variables conocidas (para descubrimiento).
+    /// Nombres de todas las variables conocidas (para descubrimiento crudo).
     pub fn list_variables(&self) -> Vec<String> {
         self.runtime.store().list_variables()
+    }
+
+    /// Catálogo curado de controles accionables (issue #10).
+    ///
+    /// A diferencia de [`Sim::list_variables`] (que vuelca el registro entero),
+    /// esto devuelve las entradas curadas a mano — nombre amigable, LVAR, tipo,
+    /// valores válidos, descripción, grupo y dominio (cabina/mundo). Es lo que
+    /// la CLI usa para autocompletar y el MCP para el esquema de `set_control`.
+    pub fn list_controls(&self) -> Vec<Control> {
+        controls::CATALOG.to_vec()
     }
 
     /// Tiempo de simulación acumulado en segundos (monótono).
@@ -240,6 +279,71 @@ mod tests {
         let snap = sim.snapshot();
         assert_eq!(snap.len(), vars.len(), "snapshot cubre todas las variables");
         assert!(snap.contains_key(DC_BAT_BUS));
+    }
+
+    #[test]
+    fn every_catalog_lvar_is_registered_after_a_tick() {
+        // El test clave del issue #10: cada LVAR del catálogo debe existir en el
+        // registro tras un tick. Caza typos en el catálogo y drift del vendor
+        // (un LVAR renombrado upstream deja de registrarse y esto lo detecta).
+        let mut sim = Sim::new();
+        sim.step(1000);
+        let vars = sim.list_variables();
+        for c in controls::CATALOG {
+            assert!(
+                vars.iter().any(|n| n == c.lvar),
+                "LVAR '{}' del control '{}' no está en el registro tras un tick",
+                c.lvar,
+                c.name
+            );
+        }
+    }
+
+    #[test]
+    fn list_controls_exposes_the_curated_catalog() {
+        let sim = Sim::new();
+        let controls = sim.list_controls();
+        assert!(!controls.is_empty());
+        assert!(controls.iter().any(|c| c.name == "bat_1"));
+        // Todos los de Fase 1 son del grupo eléctrico.
+        assert!(controls
+            .iter()
+            .all(|c| c.group == crate::controls::ControlGroup::Elec));
+    }
+
+    #[test]
+    fn set_by_friendly_name_writes_the_underlying_lvar() {
+        let mut sim = Sim::new();
+        // Misma secuencia probada que el test por LVAR crudo, pero accionando por
+        // nombre amigable: debe escribir el LVAR de FBW y encender el DC BAT bus.
+        sim.step(1000);
+        sim.set("bat_1", 1.0).unwrap();
+        sim.set("bat_2", 1.0).unwrap();
+        sim.run(2.0, 5.0);
+
+        // El nombre amigable escribe exactamente el LVAR subyacente.
+        let raw = sim.get(&["OVHD_ELEC_BAT_1_PB_IS_AUTO"]).unwrap();
+        assert_eq!(raw["OVHD_ELEC_BAT_1_PB_IS_AUTO"], 1.0);
+
+        let s = sim.get(&[DC_BAT_BUS]).unwrap();
+        assert_eq!(s[DC_BAT_BUS], 1.0, "DC BAT ON con baterías por nombre amigable");
+    }
+
+    #[test]
+    fn set_out_of_range_value_is_rejected_with_a_useful_error() {
+        let mut sim = Sim::new();
+        // Un pulsador booleano solo admite 0/1: 5.0 debe rechazarse.
+        let err = sim.set("bat_1", 5.0).unwrap_err();
+        match err {
+            ApiError::BadValue { name, value, reason } => {
+                assert_eq!(name, "bat_1");
+                assert_eq!(value, 5.0);
+                assert!(reason.contains("0") && reason.contains("1"), "motivo útil: {reason}");
+            }
+            other => panic!("esperaba BadValue, fue {other:?}"),
+        }
+        // El rechazo también aplica por LVAR crudo del catálogo.
+        assert!(sim.set(BAT_1, 2.0).is_err());
     }
 
     #[test]
