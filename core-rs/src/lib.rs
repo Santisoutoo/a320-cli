@@ -7,5 +7,7 @@
 //!
 //! Módulos:
 //! - [`variables`]: registro de variables + reader/writer persistentes.
+//! - [`runtime`]: runtime persistente (tick loop) sobre `Simulation<A320>`.
 
+pub mod runtime;
 pub mod variables;
