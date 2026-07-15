@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "a320-sim"
+version = "0.1.0"
+description = "Headless A320 systems simulator core (FlyByWire) exposed to Python"
+readme = "README.md"
+requires-python = ">=3.9"
+# GPLv3: la extensión enlaza los crates vendorizados de FBW y hereda su licencia.
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Santiago Souto" }]
+keywords = ["a320", "flybywire", "simulation", "systems", "mcp", "benchmark"]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/Santisoutoo/a320-cli"
+Repository = "https://github.com/Santisoutoo/a320-cli"
+
+[tool.maturin]
+# Nombre importable de la extensión (== [lib].name de Cargo.toml).
+module-name = "a320_sim"
+# Desacopla la extensión de libpython al empaquetar (ver Cargo.toml [features]).
+features = ["pyo3/extension-module"]

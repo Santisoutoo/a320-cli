@@ -9,7 +9,7 @@ from a terminal by a human or over MCP by an LLM agent.**
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue)](#license--credits)
 [![Rust 1.93](https://img.shields.io/badge/rust-1.93-b7410e?logo=rust)](core-rs/rust-toolchain.toml)
 [![FBW pin](https://img.shields.io/badge/FBW%20pin-13bce4b-6f42c1)](docs/decisiones.md)
-[![Phase 1](https://img.shields.io/badge/phase%201-in%20progress-d4a017)](#roadmap)
+[![Phase 2](https://img.shields.io/badge/phase%202-next-d4a017)](#roadmap)
 [![MCP server](https://img.shields.io/badge/MCP%20server-planned-6e7781)](#the-agent-loop)
 
 </div>
@@ -140,13 +140,78 @@ MCP tools exposed to the agent: `set_control`, `read_state`, `read_ecam`, `advan
 
    The first build takes several minutes (it compiles the FBW monorepo's dependencies).
 
+4. **(Optional) Python bindings** — drive the same core from Python. Building now needs
+   **both** toolchains (Rust + Python ≥ 3.9), since it compiles the Rust core into a Python
+   extension:
+
+   ```powershell
+   cd bindings
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -e .
+   python tests\test_smoke.py
+   ```
+
+   Then `import a320_sim` exposes the `Sim` class (see [bindings/README.md](bindings/README.md)).
+
+5. **(Optional) CLI** — operate the aircraft from a terminal. After the bindings
+   are installed in the same environment:
+
+   ```powershell
+   pip install -e cli/
+   a320-cli            # or: python -m a320_cli
+   ```
+
+## Operate it from the terminal (CLI)
+
+The CLI is the human window onto the core: flip switches, read buses, advance
+time, and `watch` the electrical network come alive. Commands map 1:1 onto the
+API (`set` / `get` / `step` / `run` / `env` / `snapshot` / `controls` / `vars` /
+`watch`); control names tab-complete from the curated catalog, and errors print a
+one-line message instead of a traceback. Full command reference in
+[cli/README.md](cli/README.md).
+
+**Worked example — the Phase-1 target scenario** (cold & dark → battery →
+external power), typed straight into the REPL:
+
+```text
+a320 [t=   1.0s]> set bat_1 on
+  bat_1 <- 1
+a320 [t=   1.0s]> set bat_2 on
+  bat_2 <- 1
+a320 [t=   1.0s]> watch ELEC_DC_BAT_BUS_IS_POWERED ELEC_AC_1_BUS_IS_POWERED
+watching 2 var(s) at 5 Hz - Ctrl+C to stop
+* ELEC_DC_BAT_BUS_IS_POWERED   1     <- DC BAT bus comes alive around t=2.0s
+  ELEC_AC_1_BUS_IS_POWERED     0        (AC stays dead: no AC source yet)
+  t=    2.00s
+^C
+  [watch stopped at t=3.20s]
+
+a320 [t=   3.2s]> set bus_tie auto     # AUTO is mandatory: no seeding (D-007)
+  bus_tie <- 1
+a320 [t=   3.2s]> set ext_pwr_avail 1
+  ext_pwr_avail <- 1
+a320 [t=   3.2s]> set ext_pwr on
+  ext_pwr <- 1
+a320 [t=   3.2s]> watch ELEC_AC_1_BUS_IS_POWERED ELEC_AC_2_BUS_IS_POWERED ELEC_DC_1_BUS_IS_POWERED ELEC_DC_2_BUS_IS_POWERED
+watching 4 var(s) at 5 Hz - Ctrl+C to stop
+* ELEC_AC_1_BUS_IS_POWERED     1     <- whole AC network wakes up around t=3.6s
+* ELEC_AC_2_BUS_IS_POWERED     1
+* ELEC_DC_1_BUS_IS_POWERED     1
+* ELEC_DC_2_BUS_IS_POWERED     1
+  t=    3.60s
+```
+
+The `*` marks a powered bus. `watch` advances the sim at ~5 Hz and re-renders in
+place, so you see contactors sequence — not just a before and an after.
+
 ## Roadmap
 
 | Phase | Scope | Status |
 |---|---|---|
-| **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack decided: Rust core + PyO3 |
-| **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **In progress** — design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
-| **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | Planned |
+| **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — success criterion met (see [Demo](#demo)); zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack settled ([D-004](docs/decisiones.md)) |
+| **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **Done** — success criterion automated as an integration test (`core-rs/tests/electrical_slice.rs`); curated control catalog, PyO3 bindings (`a320_sim`) and REPL with live `watch` shipped; design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
+| **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | **Next** |
 | **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | Planned |
 | **4 — More systems** | Hydraulics, APU, fuel, engine start; richer world boundary (N2 input) | Planned |
 | **5 — Benchmark (research)** | Scenario suite with QRH ground truth, trajectory-level compliance scoring, baselines + ablations | Planned |
