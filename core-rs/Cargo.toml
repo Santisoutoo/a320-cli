@@ -1,0 +1,16 @@
+[package]
+name = "a320-sim-core"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+
+[dependencies]
+systems = { path = "vendor/aircraft/fbw-common/src/wasm/systems/systems" }
+a320_systems = { path = "vendor/aircraft/fbw-a32nx/src/wasm/systems/a320_systems" }
+uom = "0.37.0"
+
+# Paquete independiente: no pertenece al workspace del vendor. El exclude es
+# imprescindible: sin él, cargo intenta resolver la herencia `workspace = true`
+# de los crates vendorizados contra ESTE workspace en vez del suyo propio.
+[workspace]
+exclude = ["vendor"]
