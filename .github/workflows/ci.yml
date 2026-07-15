@@ -46,17 +46,18 @@ jobs:
         working-directory: core-rs
         run: cargo test
 
-      # Smoke test de verdad: corre el spike y comprueba que el avion se
-      # instancia, simula y la red electrica cobra vida al meter ext pwr.
-      # En debug a proposito: el spike simula ~4 s y asi reutiliza los
-      # artefactos de check/test en vez de recompilar FBW entero en release.
-      # `shell: bash` -> pipefail, si no el `tee` se traga un panic del spike.
-      - name: Smoke test del spike
+      # Smoke test de verdad: corre la demo sobre api::Sim (main.rs, antes el
+      # spike de Fase 0) y comprueba que el avion se instancia, simula y la red
+      # electrica cobra vida al meter ext pwr. La demo imprime ON/off amigables.
+      # En debug a proposito: simula ~4 s y asi reutiliza los artefactos de
+      # check/test en vez de recompilar FBW entero en release.
+      # `shell: bash` -> pipefail, si no el `tee` se traga un panic de la demo.
+      - name: Smoke test de la demo
         working-directory: core-rs
         shell: bash
         run: |
-          cargo run | tee spike.out
-          grep -q '\[ext pwr ON\] *AC_1=true' spike.out \
+          cargo run | tee demo.out
+          grep -q '\[ext pwr ON\] *AC_1=ON' demo.out \
             || { echo "::error::el AC_1 bus no se alimento con ext pwr ON"; exit 1; }
 
   lint:

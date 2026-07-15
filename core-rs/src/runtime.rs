@@ -239,10 +239,18 @@ mod tests {
 
         rt.step(1000);
         // No es el 100 hardcodeado del test bed.
-        assert!((rt.sim_time() - 1.0).abs() < 1e-9, "sim_time = {}", rt.sim_time());
+        assert!(
+            (rt.sim_time() - 1.0).abs() < 1e-9,
+            "sim_time = {}",
+            rt.sim_time()
+        );
 
         rt.step(1000);
-        assert!((rt.sim_time() - 2.0).abs() < 1e-9, "sim_time = {}", rt.sim_time());
+        assert!(
+            (rt.sim_time() - 2.0).abs() < 1e-9,
+            "sim_time = {}",
+            rt.sim_time()
+        );
     }
 
     #[test]
@@ -272,7 +280,11 @@ mod tests {
     fn run_subdivides_into_ticks() {
         let mut rt = Runtime::apron_cold_and_dark();
         rt.run(2.0, 5.0); // 10 ticks de 200 ms
-        assert!((rt.sim_time() - 2.0).abs() < 1e-9, "sim_time = {}", rt.sim_time());
+        assert!(
+            (rt.sim_time() - 2.0).abs() < 1e-9,
+            "sim_time = {}",
+            rt.sim_time()
+        );
     }
 
     #[test]
@@ -326,7 +338,11 @@ mod tests {
             "DC BAT debería alimentarse aunque el set llegue antes del primer tick"
         );
         // El tick de inicialización no adelanta el reloj del caller.
-        assert!((rt.sim_time() - 2.0).abs() < 1e-9, "sim_time = {}", rt.sim_time());
+        assert!(
+            (rt.sim_time() - 2.0).abs() < 1e-9,
+            "sim_time = {}",
+            rt.sim_time()
+        );
     }
 
     #[test]
@@ -336,15 +352,27 @@ mod tests {
         // Cold & dark: sin seeding, los pulsadores de batería leen 0 (no AUTO).
         // Toda la red debe estar sin alimentar.
         rt.step(1000);
-        assert!(!is_true(rt.read_by_name(DC_BAT_BUS_POWERED)), "DC BAT off en cold & dark");
-        assert!(!is_true(rt.read_by_name(AC_1_BUS_POWERED)), "AC 1 off en cold & dark");
+        assert!(
+            !is_true(rt.read_by_name(DC_BAT_BUS_POWERED)),
+            "DC BAT off en cold & dark"
+        );
+        assert!(
+            !is_true(rt.read_by_name(AC_1_BUS_POWERED)),
+            "AC 1 off en cold & dark"
+        );
 
         // Baterías ON: el DC BAT bus debe cobrar vida (solo baterías, sin AC).
         rt.write_by_name(BAT_1_PB_IS_AUTO, 1.0);
         rt.write_by_name(BAT_2_PB_IS_AUTO, 1.0);
         rt.run(2.0, 5.0); // settling: 10 ticks de 200 ms, como el spike
 
-        assert!(is_true(rt.read_by_name(DC_BAT_BUS_POWERED)), "DC BAT ON con baterías");
-        assert!(!is_true(rt.read_by_name(AC_1_BUS_POWERED)), "AC 1 sigue off (sin fuente AC)");
+        assert!(
+            is_true(rt.read_by_name(DC_BAT_BUS_POWERED)),
+            "DC BAT ON con baterías"
+        );
+        assert!(
+            !is_true(rt.read_by_name(AC_1_BUS_POWERED)),
+            "AC 1 sigue off (sin fuente AC)"
+        );
     }
 }

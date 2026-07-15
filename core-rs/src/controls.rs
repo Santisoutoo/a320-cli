@@ -263,7 +263,9 @@ mod tests {
     #[test]
     fn catalog_covers_the_phase1_electrical_panel() {
         // Los controles que el issue #10 exige para Fase 1.
-        for name in ["bat_1", "bat_2", "ext_pwr", "apu_gen", "bus_tie", "gen_1", "gen_2"] {
+        for name in [
+            "bat_1", "bat_2", "ext_pwr", "apu_gen", "bus_tie", "gen_1", "gen_2",
+        ] {
             assert!(by_name(name).is_some(), "falta el control '{name}'");
         }
     }
@@ -290,7 +292,10 @@ mod tests {
     fn cockpit_controls_are_distinguished_from_world_fakes() {
         // El pulsador de ext pwr es cabina; la disponibilidad de GPU es mundo.
         assert_eq!(by_name("ext_pwr").unwrap().domain, ControlDomain::Cockpit);
-        assert_eq!(by_name("ext_pwr_avail").unwrap().domain, ControlDomain::World);
+        assert_eq!(
+            by_name("ext_pwr_avail").unwrap().domain,
+            ControlDomain::World
+        );
         // El único fake de mundo del catálogo de Fase 1 es EXT_PWR_AVAIL:1.
         let world: Vec<_> = CATALOG
             .iter()
@@ -321,7 +326,10 @@ mod tests {
 
     #[test]
     fn range_validation_is_inclusive() {
-        let v = ValidValues::Range { min: 0.0, max: 10.0 };
+        let v = ValidValues::Range {
+            min: 0.0,
+            max: 10.0,
+        };
         assert!(v.check(0.0).is_ok());
         assert!(v.check(10.0).is_ok());
         assert!(v.check(5.0).is_ok());
