@@ -88,6 +88,35 @@ def test_discovery_and_snapshot():
     assert DC_BAT in snap
 
 
+def test_list_controls_exposes_curated_catalog():
+    """list_controls devuelve el catálogo curado como lista de dicts triviales."""
+    sim = a320_sim.Sim()
+
+    controls = sim.list_controls()
+    assert isinstance(controls, list)
+    assert len(controls) > 0
+
+    by_name = {c["name"]: c for c in controls}
+    # Los controles del panel eléctrico de Fase 1 deben estar todos.
+    for name in ("bat_1", "bat_2", "ext_pwr", "apu_gen", "bus_tie", "gen_1", "gen_2"):
+        assert name in by_name, f"falta el control '{name}'"
+
+    bat_1 = by_name["bat_1"]
+    # Cada entrada trae los metadatos del esquema, todos como str por el FFI.
+    expected_keys = {
+        "name", "lvar", "kind", "valid_values", "description", "group", "domain",
+    }
+    assert set(bat_1) == expected_keys
+    assert all(isinstance(v, str) for v in bat_1.values())
+    assert bat_1["lvar"] == "OVHD_ELEC_BAT_1_PB_IS_AUTO"
+    assert bat_1["kind"] == "bool"
+    assert bat_1["group"] == "ELEC"
+    assert bat_1["domain"] == "cockpit"
+
+    # El fake de mundo (GPU enchufado) se distingue por dominio.
+    assert by_name["ext_pwr_avail"]["domain"] == "world"
+
+
 def test_environment_and_sim_time():
     """set_environment se refleja en las simvars; sim_time avanza."""
     sim = a320_sim.Sim()
