@@ -84,6 +84,18 @@ El crate `bindings/` (`cdylib` + `rlib`, lib `a320_sim`) expone `api::Sim` como 
 - **Toolchain pineado también en `bindings/`.** `bindings/rust-toolchain.toml` fija 1.93.0 (igual que core-rs y el vendor): este crate compila el vendor transitivamente y maturin invoca cargo en su directorio, así que el pin debe gobernar también aquí. Construir ahora requiere **ambos** toolchains (Rust + Python), documentado en el README.
 
 **Alcance**: el binding es 1:1 con la superficie actual de `api::Sim` (`set`/`get`/`step`/`run`/`set_environment`/`snapshot`/`list_variables`/`sim_time`). `list_controls()` (#10/#12) y los fallos + `read_ecam()` (Fase 2) se añadirán cuando existan en el core; no se stubbean aquí.
+**Actualización (#12)**: `list_controls()` ya está expuesto en el binding — devuelve una lista de dicts (`name`, `lvar`, `kind`, `valid_values`, `description`, `group`, `domain`), todo `str` para cruzar el FFI. Cierra la parte que #10/#11 dejaron pendiente por ir en paralelo.
+
+### D-011 — CLI REPL: stdlib (`cmd` + `readline`/`pyreadline3`), sin `prompt_toolkit`
+**Fecha**: 2026-07-15 (Fase 1, issue #12)
+El REPL humano (`cli/`, paquete `a320_cli`) se construye sobre la **stdlib**: `cmd.Cmd` para el bucle de lectura, el despacho de comandos (`do_*`), la ayuda por comando (docstrings + `help_*`) y el autocompletado con readline (`complete_*`). En Windows `readline` lo aporta `pyreadline3` (dependencia con marcador `platform_system == 'Windows'`); en Linux/macOS CPython ya lo trae. Si falta readline, el REPL sigue funcionando sin tab-completion (aviso al arrancar, no un fallo).
+**Por qué stdlib y no `prompt_toolkit`**: la superficie es un REPL de una línea por comando con completado por prefijo de nombres de control/variable; `cmd.Cmd` lo cubre entero sin dependencias nativas ni un bucle async. `prompt_toolkit` aportaría multilínea, resaltado y widgets que aquí no se usan, a cambio de una dependencia pesada. La ergonomía cómoda para la capa de agente (motivo de elegir Python en D-004) es del servidor MCP (Fase 3), no del REPL humano.
+**Decisiones de diseño concretas**:
+- **Sin lógica de simulación** (principio de "un core, dos frontends"): cada comando es un mapeo 1:1 sobre `a320_sim.Sim`. La CLI no conoce nada de FBW ni del registro salvo por lo que la API le devuelve.
+- **`SimError` nunca se propaga como traceback**: todo comando envuelve la llamada al core y `ValueError` de parseo, e imprime una línea `error: ...` accionable (criterio del issue). El mensaje viene del `Display` del `ApiError`, que ya dice cómo descubrir nombres válidos.
+- **Valores amigables en `set`**: `on/off`, `true/false`, `yes/no`, `auto` mapean a `1.0/0.0` además de cualquier literal numérico; la validación de rango sigue siendo del core (D-009), la CLI solo traduce el alias. `auto = on` porque los pulsadores de batería/bus tie usan AUTO como su estado "en el bucle".
+- **`watch` consciente del TTY**: en un terminal real redibuja las mismas líneas en el sitio (cursor-up + `\033[K`) a ~5 Hz; cuando `stdout` está redirigido (captura/automatización) cae a una línea de log por refresco, sin secuencias ANSI, para que las transiciones se lean limpias. Sale con `Ctrl+C` (KeyboardInterrupt) sin abandonar el REPL. El paso a ~5 Hz (`step 200 ms` + `sleep 0.2 s`) reproduce el patrón de settling del core, así que se ve al DC BAT y a la red AC cobrar vida en tiempo casi real.
+- **Empaquetado**: `pip install -e cli/` (setuptools, paquete plano `a320_cli`), console-script `a320-cli` y `python -m a320_cli`. Depende de `a320-sim` (instalado antes desde `bindings/`, no está en PyPI); pip la da por satisfecha si ya está en el venv. GPLv3 por enlazar (vía la extensión) con el vendor de FBW.
 
 ## Abiertas
 
