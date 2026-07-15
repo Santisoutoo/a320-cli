@@ -225,6 +225,8 @@ __marimo__/
 /core-rs/target/
 **/*.rs.bk
 *.pdb
+#   Salida del smoke test del spike (la genera el CI y `cargo run | tee`).
+/core-rs/spike.out
 
 # Claude Code: permisos locales de cada maquina, no compartidos
 .claude/settings.local.json
