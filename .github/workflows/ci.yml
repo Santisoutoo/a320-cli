@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main]
+
+# Un PR que recibe varios pushes seguidos solo mantiene vivo el ultimo run:
+# compilar los crates de FBW es caro y no interesa pagarlo por commits pisados.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: core (nativo)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (con el vendor de FBW pineado)
+        uses: actions/checkout@v4
+        with:
+          # El submodulo de FBW pesa ~600 MB: shallow, y solo el commit pineado.
+          submodules: recursive
+          fetch-depth: 1
+
+      # El toolchain sale de core-rs/rust-toolchain.toml (mismo pin que el
+      # vendor). rustup lo instala solo en la primera invocacion de cargo.
+      - name: Mostrar toolchain
+        working-directory: core-rs
+        run: cargo --version --verbose
+
+      - name: Cache de cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core-rs
+
+      # Compilacion NATIVA siempre. Si algun dia el build arrastra msfs-rs,
+      # systems_wasm o wasm-bindgen, es un bug de decoupling (ver D-005 en
+      # docs/decisiones.md): se arregla, no se instala un toolchain wasm.
+      - name: cargo check
+        working-directory: core-rs
+        run: cargo check --all-targets
+
+      - name: cargo test
+        working-directory: core-rs
+        run: cargo test
+
+      # Smoke test de verdad: corre el spike y comprueba que el avion se
+      # instancia, simula y la red electrica cobra vida al meter ext pwr.
+      # En debug a proposito: el spike simula ~4 s y asi reutiliza los
+      # artefactos de check/test en vez de recompilar FBW entero en release.
+      # `shell: bash` -> pipefail, si no el `tee` se traga un panic del spike.
+      - name: Smoke test del spike
+        working-directory: core-rs
+        shell: bash
+        run: |
+          cargo run | tee spike.out
+          grep -q '\[ext pwr ON\] *AC_1=true' spike.out \
+            || { echo "::error::el AC_1 bus no se alimento con ext pwr ON"; exit 1; }
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # El vendor hace falta aunque solo lintemos nuestro crate: `systems` y
+          # `a320_systems` son path deps y clippy tiene que compilarlas.
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Cache de cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core-rs
+
+      - name: rustfmt
+        working-directory: core-rs
+        run: cargo fmt --check
+
+      # Los warnings del codigo vendorizado de FBW no son nuestros y no se
+      # arreglan: -D warnings aplica solo al crate local.
+      - name: clippy
+        working-directory: core-rs
+        run: cargo clippy --all-targets -- -D warnings

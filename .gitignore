@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Rust
+/core-rs/target/
+# salida del smoke test del spike (CI y local)
+/core-rs/spike.out
+
+# Claude Code: permisos locales de cada máquina, no compartidos
+.claude/settings.local.json

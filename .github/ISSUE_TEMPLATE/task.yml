@@ -1,0 +1,96 @@
+name: Task
+description: A unit of work that maps to a single pull request
+title: "[Task] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and goal
+      description: "What needs to exist and why. Cite evidence where it helps (file:line, docs/decisiones.md entry, design note)"
+      placeholder: e.g. docs/fase1-runtime.md fixes the design; the registry is the first piece of it
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Concrete change being proposed
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Verifiable checklist to consider the issue done
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      description: Milestone from CLAUDE.md
+      options:
+        - "Fase 0 — Spike de viabilidad"
+        - "Fase 1 — Core + API + CLI"
+        - "Fase 2 — Failures + detección"
+        - "Fase 3 — MCP server"
+        - "Fase 4 — Sistemas ampliados"
+        - "Fase 5 — Benchmark"
+        - "Meta / infra (no phase)"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - core-rs
+        - bindings
+        - cli
+        - mcp
+        - scenarios
+        - docs
+        - ci
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0 (now)
+        - P1 (next)
+        - P2 (planned)
+        - P3 (someday)
+    validations:
+      required: true
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Estimated effort
+      options:
+        - S (hours)
+        - M (a day)
+        - L (multiple days)
+    validations:
+      required: true
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      description: Blocking issues, if any
+      placeholder: "#12, #13"
+  - type: textarea
+    id: fbw
+    attributes:
+      label: FBW touchpoints
+      description: "Paths inside the vendored FBW monorepo this work touches. Start with the fbw-scout agent rather than exploring the monorepo by hand — it is huge."
+      placeholder: |
+        core-rs/vendor/aircraft/fbw-common/src/wasm/systems/systems/src/simulation/test.rs:618-686
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
