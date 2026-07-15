@@ -140,6 +140,20 @@ MCP tools exposed to the agent: `set_control`, `read_state`, `read_ecam`, `advan
 
    The first build takes several minutes (it compiles the FBW monorepo's dependencies).
 
+4. **(Optional) Python bindings** — drive the same core from Python. Building now needs
+   **both** toolchains (Rust + Python ≥ 3.9), since it compiles the Rust core into a Python
+   extension:
+
+   ```powershell
+   cd bindings
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   pip install -e .
+   python tests\test_smoke.py
+   ```
+
+   Then `import a320_sim` exposes the `Sim` class (see [bindings/README.md](bindings/README.md)).
+
 ## Roadmap
 
 | Phase | Scope | Status |
