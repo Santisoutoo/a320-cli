@@ -154,6 +154,57 @@ MCP tools exposed to the agent: `set_control`, `read_state`, `read_ecam`, `advan
 
    Then `import a320_sim` exposes the `Sim` class (see [bindings/README.md](bindings/README.md)).
 
+5. **(Optional) CLI** — operate the aircraft from a terminal. After the bindings
+   are installed in the same environment:
+
+   ```powershell
+   pip install -e cli/
+   a320-cli            # or: python -m a320_cli
+   ```
+
+## Operate it from the terminal (CLI)
+
+The CLI is the human window onto the core: flip switches, read buses, advance
+time, and `watch` the electrical network come alive. Commands map 1:1 onto the
+API (`set` / `get` / `step` / `run` / `env` / `snapshot` / `controls` / `vars` /
+`watch`); control names tab-complete from the curated catalog, and errors print a
+one-line message instead of a traceback. Full command reference in
+[cli/README.md](cli/README.md).
+
+**Worked example — the Phase-1 target scenario** (cold & dark → battery →
+external power), typed straight into the REPL:
+
+```text
+a320 [t=   1.0s]> set bat_1 on
+  bat_1 <- 1
+a320 [t=   1.0s]> set bat_2 on
+  bat_2 <- 1
+a320 [t=   1.0s]> watch ELEC_DC_BAT_BUS_IS_POWERED ELEC_AC_1_BUS_IS_POWERED
+watching 2 var(s) at 5 Hz - Ctrl+C to stop
+* ELEC_DC_BAT_BUS_IS_POWERED   1     <- DC BAT bus comes alive around t=2.0s
+  ELEC_AC_1_BUS_IS_POWERED     0        (AC stays dead: no AC source yet)
+  t=    2.00s
+^C
+  [watch stopped at t=3.20s]
+
+a320 [t=   3.2s]> set bus_tie auto     # AUTO is mandatory: no seeding (D-007)
+  bus_tie <- 1
+a320 [t=   3.2s]> set ext_pwr_avail 1
+  ext_pwr_avail <- 1
+a320 [t=   3.2s]> set ext_pwr on
+  ext_pwr <- 1
+a320 [t=   3.2s]> watch ELEC_AC_1_BUS_IS_POWERED ELEC_AC_2_BUS_IS_POWERED ELEC_DC_1_BUS_IS_POWERED ELEC_DC_2_BUS_IS_POWERED
+watching 4 var(s) at 5 Hz - Ctrl+C to stop
+* ELEC_AC_1_BUS_IS_POWERED     1     <- whole AC network wakes up around t=3.6s
+* ELEC_AC_2_BUS_IS_POWERED     1
+* ELEC_DC_1_BUS_IS_POWERED     1
+* ELEC_DC_2_BUS_IS_POWERED     1
+  t=    3.60s
+```
+
+The `*` marks a powered bus. `watch` advances the sim at ~5 Hz and re-renders in
+place, so you see contactors sequence — not just a before and an after.
+
 ## Roadmap
 
 | Phase | Scope | Status |

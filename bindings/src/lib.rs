@@ -7,8 +7,8 @@
 //! útil; ningún panic cruza el FFI.
 //!
 //! Esta capa no tiene lógica de simulación: es un envoltorio 1:1 del contrato de
-//! `api::Sim`. `list_controls()` (issue #10/#12) y los fallos + `read_ecam()`
-//! (Fase 2) se añadirán cuando existan en el core; aquí no se stubbean.
+//! `api::Sim`. `list_controls()` (issue #10/#12) ya está expuesto; los fallos +
+//! `read_ecam()` (Fase 2) se añadirán cuando existan en el core; no se stubbean.
 
 use std::collections::BTreeMap;
 
@@ -123,6 +123,32 @@ impl PySim {
     /// Nombres de todas las variables conocidas (para descubrimiento).
     fn list_variables(&self) -> Vec<String> {
         self.inner.list_variables()
+    }
+
+    /// Catálogo curado de controles accionables (issue #10/#12).
+    ///
+    /// Devuelve una lista de dicts, uno por control, con solo tipos triviales
+    /// (todos `str`) para cruzar el FFI: `name` (nombre amigable), `lvar` (LVAR
+    /// subyacente), `kind` (`bool`/`enum`/`float`), `valid_values` (descripción
+    /// legible del rango/conjunto admisible), `description`, `group` (sistema) y
+    /// `domain` (`cockpit`/`world`). Lo consume la CLI para autocompletar y el
+    /// MCP para el esquema de `set_control`.
+    fn list_controls(&self) -> Vec<BTreeMap<String, String>> {
+        self.inner
+            .list_controls()
+            .into_iter()
+            .map(|c| {
+                let mut d = BTreeMap::new();
+                d.insert("name".to_owned(), c.name.to_owned());
+                d.insert("lvar".to_owned(), c.lvar.to_owned());
+                d.insert("kind".to_owned(), c.kind.as_str().to_owned());
+                d.insert("valid_values".to_owned(), c.valid.describe());
+                d.insert("description".to_owned(), c.description.to_owned());
+                d.insert("group".to_owned(), c.group.as_str().to_owned());
+                d.insert("domain".to_owned(), c.domain.as_str().to_owned());
+                d
+            })
+            .collect()
     }
 
     /// Tiempo de simulación acumulado en segundos (monótono).

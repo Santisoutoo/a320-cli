@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a320-cli"
+version = "0.1.0"
+description = "Human REPL frontend over the headless A320 systems core"
+readme = "README.md"
+requires-python = ">=3.9"
+# GPLv3: the CLI drives the a320_sim extension, which links the vendored FBW
+# crates and inherits their license.
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Santiago Souto" }]
+keywords = ["a320", "flybywire", "simulation", "cli", "repl"]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    # The Rust core exposed to Python. Not on PyPI: install it first from the
+    # sibling crate with `pip install -e bindings/` (module name: a320_sim).
+    "a320-sim",
+    # readline on Windows (cmd.Cmd tab-completion). No-op elsewhere: CPython
+    # ships readline on Linux/macOS.
+    "pyreadline3; platform_system == 'Windows'",
+]
+
+[project.scripts]
+a320-cli = "a320_cli.repl:main"
+
+[project.urls]
+Homepage = "https://github.com/Santisoutoo/a320-cli"
+Repository = "https://github.com/Santisoutoo/a320-cli"
+
+[tool.setuptools]
+packages = ["a320_cli"]
