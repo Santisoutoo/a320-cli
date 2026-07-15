@@ -225,3 +225,6 @@ __marimo__/
 /core-rs/target/
 **/*.rs.bk
 *.pdb
+
+# Claude Code: permisos locales de cada maquina, no compartidos
+.claude/settings.local.json
