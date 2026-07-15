@@ -144,7 +144,7 @@ MCP tools exposed to the agent: `set_control`, `read_state`, `read_ecam`, `advan
 
 | Phase | Scope | Status |
 |---|---|---|
-| **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack decided: Rust core + PyO3 |
+| **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — success criterion met (see [Demo](#demo)); zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack settled ([D-004](docs/decisiones.md)) |
 | **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **In progress** — design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
 | **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | Planned |
 | **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | Planned |
