@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Rust
+#   El directorio de build del core (~700 MB). Hasta ahora solo lo salvaba la
+#   regla `target/` de la seccion PyBuilder, por coincidencia: esta es la regla
+#   intencionada. Va despues a proposito — en gitignore gana la ultima
+#   coincidencia, asi que `git check-ignore -v` apunta aqui y no alli.
+/core-rs/target/
+**/*.rs.bk
+*.pdb
+#   Salida del smoke test del spike (la genera el CI y `cargo run | tee`).
+/core-rs/spike.out
+
+# Claude Code: permisos locales de cada maquina, no compartidos
+.claude/settings.local.json

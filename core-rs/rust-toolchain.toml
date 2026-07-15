@@ -1,0 +1,8 @@
+[toolchain]
+# Mismo pin que el vendor de FBW (vendor/aircraft/rust-toolchain.toml).
+# No heredamos su `targets = ["wasm32-wasip1"]`: aqui se compila nativo.
+channel = "1.93.0"
+# Declarados a proposito: un toolchain pineado no los trae por defecto, asi que
+# sin esto `cargo fmt`/`clippy` solo funcionan donde rustup ya los instalo por
+# su cuenta. Con esto, el pin es la unica fuente de verdad del entorno.
+components = ["rustfmt", "clippy"]
