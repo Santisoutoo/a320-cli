@@ -7,7 +7,9 @@
 //!
 //! Módulos:
 //! - [`variables`]: registro de variables + reader/writer persistentes.
+//! - [`environment`]: borde con el "mundo" (tabla de simvars de `UpdateContext`).
 //! - [`runtime`]: runtime persistente (tick loop) sobre `Simulation<A320>`.
 
+pub mod environment;
 pub mod runtime;
 pub mod variables;
