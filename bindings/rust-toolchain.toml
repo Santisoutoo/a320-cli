@@ -1,0 +1,7 @@
+[toolchain]
+# Mismo pin que core-rs y el vendor de FBW: este crate compila el vendor
+# transitivamente (vía a320-sim-core), así que debe usar el toolchain con el que
+# el vendor está verificado. maturin invoca cargo en este directorio, por lo que
+# este archivo gobierna el toolchain del empaquetado.
+channel = "1.93.0"
+components = ["rustfmt", "clippy"]

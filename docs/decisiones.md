@@ -72,6 +72,19 @@ La capa `api::Sim` valida los nombres de control/variable contra el **catálogo 
 - **Test anti-drift**: `every_catalog_lvar_is_registered_after_a_tick` comprueba que cada LVAR del catálogo aparece en el registro tras un tick; caza typos en el catálogo y renombrados del vendor upstream.
 Esto cierra la desviación anotada en D-008 ("`list_controls()` se pospone; en Fase 1 lo cubre `list_variables()`").
 
+### D-010 — Bindings PyO3: crate `bindings/` como workspace independiente, empaquetado con maturin
+**Fecha**: 2026-07-15 (Fase 1, issue #11)
+El crate `bindings/` (`cdylib` + `rlib`, lib `a320_sim`) expone `api::Sim` como clase Python síncrona vía **PyO3 0.25** (abi3-py39; wheel único válido para CPython ≥ 3.9). Por el FFI solo cruzan `f64`/`bool`/`str`/list/dict; ningún tipo de FBW se filtra. Los `ApiError` afloran como excepciones Python (`SimError` base, con subtipos `UnknownControlError` y `BadValueError`, mensaje del `Display`), nunca panics.
+
+**Decisiones concretas y su porqué**:
+- **`#[pyclass(unsendable)]`.** El avión de FBW usa `Rc`/`RefCell` internamente (p. ej. `payload::BoardingInputs`, `electrical::Potential`), así que `Sim` no es `Send` y PyO3 rechaza el `#[pyclass]` por defecto. `unsendable` liga la instancia al hilo Python que la creó; si otro hilo la toca, PyO3 lanza un `RuntimeError` explícito en Python (no un panic por el FFI, no un data race). Para la CLI y el MCP —acceso secuencial desde un hilo— es el contrato correcto. La alternativa (mover la sim a un hilo dedicado con canales) se descartó por complejidad sin beneficio en este uso.
+- **Workspace independiente, no miembro del de core-rs.** `core-rs` es package+workspace con `exclude = ["vendor"]` (D-005). Meter `bindings/` como miembro obligaría a un `members`/`..` cruzando directorios y a que su workspace resolviera de nuevo la herencia `workspace = true` del vendor. En su lugar, `bindings/` declara su propio `[workspace]` vacío y depende de `a320-sim-core` por `path = "../core-rs"`. Cada crate es su propia raíz; maturin/cargo resuelven solo `bindings` + `core-rs` + vendor. Es el mismo patrón que ya usa core-rs, por las mismas razones.
+- **maturin** como build-backend (PEP 517). Es la opción por defecto y estándar para PyO3; `pip install -e .` en un venv limpio produce el módulo editable `a320_sim`. No se evaluó ninguna alternativa (setuptools-rust) porque maturin cubre el caso sin fricción; el criterio del issue #11 ("si se elige otra cosa, registrar por qué") no aplica.
+- **`extension-module` tras feature, no en default.** La feature `pyo3/extension-module` (desacopla la extensión de libpython) la activa maturin al empaquetar (`[tool.maturin] features`), pero se deja fuera de `default` para que `cargo test` enlace libpython del intérprete y compile el binario de tests nativo. Así ambos criterios del issue —`pip install -e .` y `cargo test` nativo— se cumplen sin conflicto de enlazado.
+- **Toolchain pineado también en `bindings/`.** `bindings/rust-toolchain.toml` fija 1.93.0 (igual que core-rs y el vendor): este crate compila el vendor transitivamente y maturin invoca cargo en su directorio, así que el pin debe gobernar también aquí. Construir ahora requiere **ambos** toolchains (Rust + Python), documentado en el README.
+
+**Alcance**: el binding es 1:1 con la superficie actual de `api::Sim` (`set`/`get`/`step`/`run`/`set_environment`/`snapshot`/`list_variables`/`sim_time`). `list_controls()` (#10/#12) y los fallos + `read_ecam()` (Fase 2) se añadirán cuando existan en el core; no se stubbean aquí.
+
 ## Abiertas
 
 *(ninguna)*

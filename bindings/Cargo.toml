@@ -1,0 +1,34 @@
+[package]
+name = "a320-sim-bindings"
+version = "0.1.0"
+edition = "2021"
+# GPLv3: este crate enlaza (vía a320-sim-core) los crates vendorizados de FBW y
+# hereda su licencia. La metadata del paquete Python (pyproject.toml) lo repite.
+license = "GPL-3.0-or-later"
+description = "PyO3 bindings exposing the headless A320 systems core to Python"
+
+[lib]
+# Nombre del módulo de extensión importable desde Python: `import a320_sim`.
+# Debe coincidir con la función `#[pymodule] fn a320_sim` de src/lib.rs.
+name = "a320_sim"
+# cdylib: la extensión que carga CPython. rlib: para que `cargo test` pueda
+# enlazar la lib en el binario de tests nativo.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+a320-sim-core = { path = "../core-rs" }
+pyo3 = { version = "0.25", features = ["abi3-py39"] }
+
+[features]
+# `extension-module` desacopla la extensión de libpython (símbolos resueltos por
+# el intérprete en runtime). maturin lo activa al empaquetar (ver pyproject).
+# Se deja FUERA de default a propósito: así `cargo test` enlaza libpython del
+# intérprete y compila el binario de tests nativo sin símbolos sin resolver.
+extension-module = ["pyo3/extension-module"]
+
+# Workspace propio e independiente, igual que core-rs. Este crate NO entra en el
+# workspace de core-rs (que es package+workspace con `exclude = ["vendor"]`):
+# depende de a320-sim-core por path y es su propia raíz de workspace, de modo que
+# maturin/cargo resuelven solo este crate + core-rs + vendor, sin absorber nada.
+# Ver docs/decisiones.md (D-009).
+[workspace]
