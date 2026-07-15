@@ -124,7 +124,10 @@ fn electrical_slice_cold_and_dark_to_battery_to_ext_pwr() {
         !powered(&s, DC_1_BUS),
         "baterías ON: DC 1 sin alimentar (se alimenta vía TR 1)"
     );
-    assert!(powered(&s, DC_HOT_1_BUS), "baterías ON: DC HOT 1 sigue vivo");
+    assert!(
+        powered(&s, DC_HOT_1_BUS),
+        "baterías ON: DC HOT 1 sigue vivo"
+    );
 
     // --- (3) EXT PWR disponible + ON: red AC completa alimentada -------------
     // `EXT_PWR_AVAIL:1` = fuente conectada en el GPU; el pulsador ON la mete en
