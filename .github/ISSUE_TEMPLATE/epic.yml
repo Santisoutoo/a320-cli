@@ -1,0 +1,56 @@
+name: Epic
+description: Group related tasks under a common goal (used for the later, less-defined phases)
+title: "[Epic] "
+labels: ["epic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Epics are for work that is real but not yet worth breaking down — typically Phases 4 and 5.
+        Split an epic into Task issues once its shape is clear, rather than guessing up front.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What this epic delivers, and how the project is different once it lands
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and motivation
+      description: Why this matters. For research epics, say what the contribution is.
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Sub-tasks
+      description: Known pieces. Link Task issues as they get created.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: questions
+    attributes:
+      label: Open questions
+      description: "Unresolved decisions. Anything architectural gets recorded in docs/decisiones.md once decided."
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+    validations:
+      required: true
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - "Fase 1 — Core + API + CLI"
+        - "Fase 2 — Failures + detección"
+        - "Fase 3 — MCP server"
+        - "Fase 4 — Sistemas ampliados"
+        - "Fase 5 — Benchmark"
+    validations:
+      required: true

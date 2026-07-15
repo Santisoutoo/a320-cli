@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="230" viewBox="0 0 880 230" role="img" aria-label="A320 Systems Twin — headless failure-management benchmark for LLM agents">
+  <defs>
+    <linearGradient id="crt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10161f"/>
+      <stop offset="1" stop-color="#0a0f16"/>
+    </linearGradient>
+  </defs>
+
+  <!-- bezel + screen -->
+  <rect x="0" y="0" width="880" height="230" rx="14" fill="#1c232e"/>
+  <rect x="10" y="10" width="860" height="210" rx="8" fill="url(#crt)" stroke="#2b3646" stroke-width="1.5"/>
+
+  <!-- faint scanlines -->
+  <g stroke="#ffffff" stroke-opacity="0.02" stroke-width="1">
+    <line x1="12" y1="40" x2="868" y2="40"/>
+    <line x1="12" y1="70" x2="868" y2="70"/>
+    <line x1="12" y1="100" x2="868" y2="100"/>
+    <line x1="12" y1="130" x2="868" y2="130"/>
+    <line x1="12" y1="160" x2="868" y2="160"/>
+    <line x1="12" y1="190" x2="868" y2="190"/>
+  </g>
+
+  <!-- ECAM-style electrical one-line diagram (right side) -->
+  <g font-family="'Courier New',Consolas,monospace" font-size="13" font-weight="bold">
+    <!-- buses -->
+    <g fill="none" stroke="#38e07d" stroke-width="2">
+      <rect x="560" y="42" width="110" height="24"/>
+      <rect x="722" y="42" width="110" height="24"/>
+      <rect x="560" y="168" width="110" height="24"/>
+      <rect x="722" y="168" width="110" height="24"/>
+    </g>
+    <g fill="#38e07d" text-anchor="middle">
+      <text x="615" y="59">AC 1</text>
+      <text x="777" y="59">AC 2</text>
+      <text x="615" y="185">DC 1</text>
+      <text x="777" y="185">DC BAT</text>
+    </g>
+    <!-- feed lines AC->TR->DC -->
+    <g stroke="#38e07d" stroke-width="1.6" fill="none">
+      <path d="M615 66 V96"/>
+      <path d="M615 138 V168"/>
+      <path d="M777 66 V88 H700 V150 H777 V168"/>
+      <path d="M670 180 H722" stroke-dasharray="5 4"/>
+    </g>
+    <!-- TR 1 box: failed (amber) -->
+    <rect x="585" y="96" width="60" height="42" fill="none" stroke="#f5b642" stroke-width="2"/>
+    <text x="615" y="113" fill="#f5b642" text-anchor="middle">TR 1</text>
+    <text x="615" y="130" fill="#f5b642" text-anchor="middle" font-size="11">FAULT</text>
+    <!-- GEN tag -->
+    <text x="777" y="120" fill="#38e07d" text-anchor="middle" font-size="11">EXT PWR</text>
+  </g>
+
+  <!-- title block (left side) -->
+  <g font-family="'Courier New',Consolas,monospace">
+    <text x="48" y="76" fill="#38e07d" font-size="42" font-weight="bold" letter-spacing="2">A320 SYSTEMS</text>
+    <text x="48" y="122" fill="#38e07d" font-size="42" font-weight="bold" letter-spacing="2">TWIN</text>
+    <text x="48" y="156" fill="#7fd4ff" font-size="15">headless FlyByWire systems core - CLI + MCP</text>
+    <text x="48" y="178" fill="#7fd4ff" font-size="15">a failure-management benchmark for LLM agents</text>
+  </g>
+
+  <!-- ECAM memo line -->
+  <g font-family="'Courier New',Consolas,monospace" font-size="13" font-weight="bold">
+    <text x="48" y="205" fill="#f5b642">ELEC TR 1 FAULT</text>
+    <text x="230" y="205" fill="#38e07d">AGENT: RUN QRH PROC . . .</text>
+  </g>
+</svg>
