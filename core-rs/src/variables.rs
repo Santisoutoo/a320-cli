@@ -264,7 +264,10 @@ mod tests {
         store.write_by_name("ZULU", 1.0);
         store.write_by_name("ALPHA", 2.0);
 
-        assert_eq!(store.list_variables(), vec!["ALPHA".to_owned(), "ZULU".to_owned()]);
+        assert_eq!(
+            store.list_variables(),
+            vec!["ALPHA".to_owned(), "ZULU".to_owned()]
+        );
     }
 
     #[test]

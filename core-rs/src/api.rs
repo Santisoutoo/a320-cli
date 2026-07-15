@@ -249,7 +249,10 @@ mod tests {
             other => panic!("esperaba UnknownControl, fue {other:?}"),
         }
         // No debe haber acuñado la variable con typo.
-        assert!(!sim.list_variables().iter().any(|n| n == "OVHD_ELEC_BAT_1_PB_IS_ATUO"));
+        assert!(!sim
+            .list_variables()
+            .iter()
+            .any(|n| n == "OVHD_ELEC_BAT_1_PB_IS_ATUO"));
     }
 
     #[test]
@@ -326,7 +329,10 @@ mod tests {
         assert_eq!(raw["OVHD_ELEC_BAT_1_PB_IS_AUTO"], 1.0);
 
         let s = sim.get(&[DC_BAT_BUS]).unwrap();
-        assert_eq!(s[DC_BAT_BUS], 1.0, "DC BAT ON con baterías por nombre amigable");
+        assert_eq!(
+            s[DC_BAT_BUS], 1.0,
+            "DC BAT ON con baterías por nombre amigable"
+        );
     }
 
     #[test]
@@ -335,10 +341,17 @@ mod tests {
         // Un pulsador booleano solo admite 0/1: 5.0 debe rechazarse.
         let err = sim.set("bat_1", 5.0).unwrap_err();
         match err {
-            ApiError::BadValue { name, value, reason } => {
+            ApiError::BadValue {
+                name,
+                value,
+                reason,
+            } => {
                 assert_eq!(name, "bat_1");
                 assert_eq!(value, 5.0);
-                assert!(reason.contains("0") && reason.contains("1"), "motivo útil: {reason}");
+                assert!(
+                    reason.contains("0") && reason.contains("1"),
+                    "motivo útil: {reason}"
+                );
             }
             other => panic!("esperaba BadValue, fue {other:?}"),
         }
