@@ -1,0 +1,3 @@
+[submodule "core-rs/vendor/aircraft"]
+	path = core-rs/vendor/aircraft
+	url = https://github.com/flybywiresim/aircraft
