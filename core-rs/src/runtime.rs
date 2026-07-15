@@ -36,6 +36,7 @@ use std::time::Duration;
 use a320_systems::A320;
 use systems::simulation::{Simulation, StartState};
 
+use crate::environment::Environment;
 use crate::variables::VariableStore;
 
 /// Runtime persistente del A320 headless.
@@ -47,6 +48,8 @@ use crate::variables::VariableStore;
 pub struct Runtime {
     simulation: Simulation<A320>,
     store: VariableStore,
+    /// Estado del mundo exterior; se escribe entero en el store cada tick.
+    environment: Environment,
     /// Tiempo de simulación acumulado, en segundos. Monótono creciente.
     sim_time: f64,
     start_state: StartState,
@@ -61,38 +64,39 @@ impl Runtime {
         // que escribir una variable por nombre acaba bajo el mismo id que el
         // avión leerá en el tick.
         let simulation = Simulation::new(start_state, A320::new, &mut store.registry);
+        let environment = Environment::cold_and_dark_ground();
         let mut runtime = Self {
             simulation,
             store,
+            environment,
             sim_time: 0.0,
             start_state,
         };
-        runtime.apply_default_ground_environment();
+        // Deja el store en un estado de mundo válido ya antes del primer tick
+        // (p. ej. para leer variables sin haber ticado todavía).
+        runtime.environment.write_all(&mut runtime.store);
         runtime
     }
 
-    /// Entorno mínimo de tierra para que el avión pueda ticar sin producir NaN.
-    ///
-    /// Con el store a cero, `AMBIENT PRESSURE = 0` hace que ratios de presión en
-    /// los sistemas produzcan NaN y un `clamp` interno haga panic. Escribimos el
-    /// mismo conjunto mínimo que el spike de Fase 0 fijaba a mano (presión y
-    /// temperatura estándar de campo, en tierra, IAS 0). Estos valores no los
-    /// escribe nunca el avión (son entradas de "mundo") y persisten en el store,
-    /// así que basta con fijarlos una vez.
-    ///
-    /// Nota de unidades: `AMBIENT PRESSURE` va en **inHg** y `AMBIENT
-    /// TEMPERATURE` en **°C** — se escriben en esas unidades directamente. El
-    /// perfil completo de entorno (todos los simvars, escritos cada tick) llega
-    /// en el issue #8; esto es el mínimo imprescindible para el tick loop.
-    fn apply_default_ground_environment(&mut self) {
-        self.store.write_by_name("IS_READY", 1.0);
-        self.store.write_by_name("SIM ON GROUND", 1.0);
-        self.store.write_by_name("AMBIENT PRESSURE", 29.92); // inHg (ISA nivel del mar)
-        self.store.write_by_name("AMBIENT TEMPERATURE", 15.0); // °C
-        self.store.write_by_name("AMBIENT DENSITY", 1.225); // kg/m^3
-        self.store.write_by_name("PRESSURE ALTITUDE", 0.0); // ft
-        self.store.write_by_name("PLANE ALT ABOVE GROUND", 0.0); // ft
-        self.store.write_by_name("AIRSPEED INDICATED", 0.0); // kt
+    /// Acceso de solo lectura al estado del mundo exterior.
+    pub fn environment(&self) -> &Environment {
+        &self.environment
+    }
+
+    /// Fija el mundo exterior con los knobs de alto nivel del contrato de la
+    /// API (`set_environment`). El resto de la tabla se deriva de forma
+    /// coherente y se escribe en cada tick.
+    pub fn set_environment(
+        &mut self,
+        altitude_ft: f64,
+        indicated_airspeed_kt: f64,
+        oat_celsius: f64,
+        qnh_hpa: f64,
+    ) {
+        self.environment
+            .set(altitude_ft, indicated_airspeed_kt, oat_celsius, qnh_hpa);
+        // Aplica ya para que una lectura inmediata (sin tick) sea coherente.
+        self.environment.write_all(&mut self.store);
     }
 
     /// Arranque cold & dark en el apron (el punto de partida del spike de Fase 0).
@@ -132,10 +136,12 @@ impl Runtime {
 
     /// Ejecuta un único tick de duración `delta`.
     ///
-    /// Las escrituras pendientes ya viven en el store (se aplicaron con
-    /// `write_by_name` antes de llamar). Se pasa el tiempo de simulación al
-    /// inicio del tick y luego se avanza el reloj en `delta`.
+    /// Orden (nota de diseño): escribir la tabla completa de mundo →
+    /// `simulation.tick` → avanzar el reloj. Las escrituras de control ya viven
+    /// en el store; el entorno se reescribe entero cada tick porque
+    /// `UpdateContext` lo relee cada tick.
     fn tick(&mut self, delta: Duration) {
+        self.environment.write_all(&mut self.store);
         self.simulation
             .tick(delta, self.sim_time, &mut self.store.reader_writer);
         self.sim_time += delta.as_secs_f64();
@@ -218,6 +224,34 @@ mod tests {
         let mut rt = Runtime::apron_cold_and_dark();
         rt.run(2.0, 5.0); // 10 ticks de 200 ms
         assert!((rt.sim_time() - 2.0).abs() < 1e-9, "sim_time = {}", rt.sim_time());
+    }
+
+    #[test]
+    fn defaults_only_read_as_stationary_on_ground_no_manual_fixups() {
+        // El spike tenía que fijar a mano on_ground/alt/temp/ias. Con el perfil
+        // por defecto del runtime, tras un tick el mundo ya es coherente en
+        // tierra sin ningún setup del caller.
+        let mut rt = Runtime::apron_cold_and_dark();
+        rt.step(1000);
+
+        assert_eq!(rt.read_by_name("SIM ON GROUND"), 1.0);
+        assert_eq!(rt.read_by_name("AIRSPEED INDICATED"), 0.0);
+        assert_eq!(rt.read_by_name("PLANE ALT ABOVE GROUND"), 0.0);
+        // AMBIENT PRESSURE en inHg (no hPa/Pa).
+        assert!((rt.read_by_name("AMBIENT PRESSURE") - 29.92).abs() < 1e-6);
+    }
+
+    #[test]
+    fn set_environment_updates_the_world() {
+        let mut rt = Runtime::apron_cold_and_dark();
+        rt.set_environment(2000.0, 0.0, -10.0, 1013.25);
+        rt.step(1000);
+
+        // uom convierte ft<->m, así que hay redondeo de coma flotante.
+        assert!((rt.read_by_name("PRESSURE ALTITUDE") - 2000.0).abs() < 1e-6);
+        assert!((rt.read_by_name("AMBIENT TEMPERATURE") - (-10.0)).abs() < 1e-6);
+        assert_eq!(rt.read_by_name("SIM ON GROUND"), 1.0); // sigue en tierra
+        assert_eq!(rt.read_by_name("PLANE ALT ABOVE GROUND"), 0.0); // coherente
     }
 
     #[test]
