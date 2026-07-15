@@ -1,0 +1,78 @@
+name: Bug
+description: Report an error or unexpected behaviour
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What is failing
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. .\scripts\bootstrap-vendor.ps1
+        2. cd core-rs; cargo run
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - core-rs
+        - bindings
+        - cli
+        - mcp
+        - scenarios
+        - docs
+        - ci
+    validations:
+      required: true
+  - type: input
+    id: pin
+    attributes:
+      label: Vendor pin
+      description: "Output of `git submodule status`. A moved pin is itself a likely cause — the benchmark is only reproducible against the pinned commit."
+      placeholder: " 13bce4bcf5a1edce34671145290ce9db0455ea57 core-rs/vendor/aircraft (v2024.1.0-rc2-29-g13bce4bcf)"
+    validations:
+      required: true
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain
+      description: "Output of `rustc --version` (expected: the pin in core-rs/rust-toolchain.toml)"
+      placeholder: "rustc 1.93.0"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Build / run output
+      description: Relevant errors. Warnings coming from the vendored FBW code are noise — we do not fix those.
+      render: shell
+  - type: checkboxes
+    id: wasm
+    attributes:
+      label: Decoupling check
+      description: "See docs/decisiones.md D-005: the crates we build declare no dependency on msfs. If one shows up, that is a decoupling bug on our side — not a missing toolchain, and never a reason to install a wasm target."
+      options:
+        - label: The native build pulled in `msfs-rs`, `systems_wasm` or `a320_systems_wasm`
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
