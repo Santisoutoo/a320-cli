@@ -9,7 +9,9 @@
 //! - [`variables`]: registro de variables + reader/writer persistentes.
 //! - [`environment`]: borde con el "mundo" (tabla de simvars de `UpdateContext`).
 //! - [`runtime`]: runtime persistente (tick loop) sobre `Simulation<A320>`.
+//! - [`api`]: capa de control/observación limpia (una API, dos frontends).
 
+pub mod api;
 pub mod environment;
 pub mod runtime;
 pub mod variables;
