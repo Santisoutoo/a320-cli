@@ -35,9 +35,22 @@ jobs:
         with:
           workspaces: core-rs
 
-      # Compilacion NATIVA siempre. Si algun dia el build arrastra msfs-rs,
-      # systems_wasm o wasm-bindgen, es un bug de decoupling (ver D-005 en
-      # docs/decisiones.md): se arregla, no se instala un toolchain wasm.
+      # Guardia ejecutable de D-005: la asuncion estructural del proyecto es que
+      # el grafo nativo NO arrastra msfs-rs, systems_wasm, a320_systems_wasm ni
+      # wasm-bindgen. Un bump del pin del vendor es exactamente lo que podria
+      # romperla, y sin esto el build empezaria a fallar senalando otra cosa.
+      - name: Guardia del decoupling (D-005)
+        working-directory: core-rs
+        shell: bash
+        run: |
+          cargo tree --prefix none -e normal,build | tee tree.out >/dev/null
+          if grep -E '^(msfs|systems_wasm|a320_systems_wasm|wasm-bindgen) ' tree.out; then
+            echo "::error::el grafo de dependencias NATIVO arrastra crates de MSFS/WASM: es un bug de decoupling (ver D-005 en docs/decisiones.md), no un toolchain que falte"
+            exit 1
+          fi
+          echo "grafo nativo limpio: sin msfs-rs / systems_wasm / a320_systems_wasm / wasm-bindgen"
+
+      # Compilacion NATIVA siempre (la guardia de arriba lo hace ejecutable).
       - name: cargo check
         working-directory: core-rs
         run: cargo check --all-targets
@@ -85,3 +98,20 @@ jobs:
       - name: clippy
         working-directory: core-rs
         run: cargo clippy --all-targets -- -D warnings
+
+  # Gate agregado: el UNICO status check que exige la proteccion de main.
+  # Anadir/renombrar jobs solo requiere tocar `needs`, no la proteccion.
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    needs: [core, lint]
+    if: always()
+    steps:
+      - name: Comprobar que todos los jobs pasaron
+        run: |
+          echo "core: ${{ needs.core.result }}"
+          echo "lint: ${{ needs.lint.result }}"
+          if [ "${{ needs.core.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "::error::algun job del CI no paso"
+            exit 1
+          fi
