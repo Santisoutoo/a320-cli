@@ -9,7 +9,7 @@ from a terminal by a human or over MCP by an LLM agent.**
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue)](#license--credits)
 [![Rust 1.93](https://img.shields.io/badge/rust-1.93-b7410e?logo=rust)](core-rs/rust-toolchain.toml)
 [![FBW pin](https://img.shields.io/badge/FBW%20pin-13bce4b-6f42c1)](docs/decisiones.md)
-[![Phase 1](https://img.shields.io/badge/phase%201-in%20progress-d4a017)](#roadmap)
+[![Phase 2](https://img.shields.io/badge/phase%202-next-d4a017)](#roadmap)
 [![MCP server](https://img.shields.io/badge/MCP%20server-planned-6e7781)](#the-agent-loop)
 
 </div>
@@ -210,8 +210,8 @@ place, so you see contactors sequence — not just a before and an after.
 | Phase | Scope | Status |
 |---|---|---|
 | **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — success criterion met (see [Demo](#demo)); zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack settled ([D-004](docs/decisiones.md)) |
-| **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **In progress** — design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
-| **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | Planned |
+| **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **Done** — success criterion automated as an integration test (`core-rs/tests/electrical_slice.rs`); curated control catalog, PyO3 bindings (`a320_sim`) and REPL with live `watch` shipped; design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
+| **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | **Next** |
 | **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | Planned |
 | **4 — More systems** | Hydraulics, APU, fuel, engine start; richer world boundary (N2 input) | Planned |
 | **5 — Benchmark (research)** | Scenario suite with QRH ground truth, trajectory-level compliance scoring, baselines + ablations | Planned |
