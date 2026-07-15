@@ -52,6 +52,15 @@ El `SimulationTestBed` de FBW, tras `Simulation::new`, ejecuta `seed()`: recorre
 **Consecuencia**: el runtime `Runtime::new(Apron)` arranca **sin seed**; todo pulsador/variable no escrita lee su default (0.0 / OFF). Para el vertical slice eléctrico esto *es* el cold & dark puro: de hecho el spike de Fase 0, que sí usaba el test bed seeded, tenía que forzar `OVHD_ELEC_BAT_{1,2}_PB_IS_AUTO=false` a mano para deshacer el AUTO que el seeding les ponía. Sin seed, ese estado se obtiene de serie. Verificado por test: `Apron` cold & dark deja toda la red sin alimentar, y `battery ON` levanta el DC BAT bus (sin AC), reproduciendo el spike.
 **Reevaluar** en fases posteriores si algún subsistema (hidráulico/neumático/APU) resultara depender de un pulsador cuyo estado programado inicial es ON y cuyo default 0 lo dejara en un estado incorrecto (no solo "apagado"). En ese caso, la solución preferida sigue siendo escribir esos pulsadores explícitamente por nombre en el perfil de arranque, no parchear el vendor.
 
+### D-008 — Modelo de errores de la capa API (validación contra el catálogo del registro)
+**Fecha**: 2026-07-15 (Fase 1, issue #9)
+La capa `api::Sim` valida los nombres de control/variable contra el **catálogo vivo del registro**: tras construir el avión, el `VariableRegistry` contiene todos los nombres que los sistemas leen/escriben más los del entorno, así que es la fuente de verdad de "nombres válidos". `set`/`get` de un nombre desconocido devuelven `ApiError::UnknownControl` **sin acuñar** un identificador (usan `registry.find`, que no muta), evitando que un typo contamine el registro. `set` con valor no finito (NaN/∞) devuelve `ApiError::BadValue`. Motivo: un REPL y un LLM necesitan saber *qué* estuvo mal.
+**Desviaciones deliberadas respecto al contrato de `CLAUDE.md`** (registradas aquí como pide el criterio de #9):
+- `get` **también** devuelve error en variable desconocida (el contrato solo dice `get(vars) -> dict`). Se prefiere un error explícito y accionable a devolver un 0.0 silencioso; el descubrimiento se hace con `list_variables()`.
+- `step`/`run`/`set_environment` devuelven `()` (son infalibles) en vez de `Result`; solo `set`/`get` devuelven `Result`.
+- `read_ecam()` y las llamadas de fallos (`inject_failure`/`clear_failure`/`list_failures`) **no** se implementan: son de Fase 2 (#14, #15). Se les deja sitio (el enum de errores y la fachada no cierran la puerta) pero no se stubbean, según indica el propio issue #9.
+- `list_controls()` del contrato se pospone; en Fase 1 el descubrimiento lo cubre `list_variables()` (único listado exigido por los criterios de #9).
+
 ## Abiertas
 
 *(ninguna)*
