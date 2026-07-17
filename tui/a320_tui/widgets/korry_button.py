@@ -59,6 +59,9 @@ class KorryButton(Static, can_focus=True):
         self.spec = spec
         self.border_title = spec.legend
         self._pb_value = 0.0
+        # Fit the border title: "COMMERCIAL" or "AC ESS FEED" would otherwise
+        # truncate to "COMMERC…" inside the default 14 cells.
+        self.styles.width = max(12, len(spec.legend) + 6)
         if spec.style == "world":
             self.add_class("world")
 
@@ -79,6 +82,10 @@ class KorryButton(Static, can_focus=True):
         elif spec.style == "on_avail":
             top = ("AVAIL", _GREEN) if (avail and not pb_on) else (_UNLIT, _DARK)
             bottom = ("ON", _BLUE) if pb_on else (_UNLIT, _DARK)
+        elif spec.style == "normal_altn":
+            # AC ESS FEED: released = NORMAL (dark), pressed = ALTN (white).
+            top = ("FAULT", _AMBER) if fault else (_UNLIT, _DARK)
+            bottom = (_UNLIT, _DARK) if pb_on else ("ALTN", _WHITE)
         else:
             # auto_off (BAT, BUS TIE) and on_off (GEN, APU GEN): lit white OFF
             # when released, dark when engaged; amber FAULT on top.

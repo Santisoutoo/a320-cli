@@ -26,6 +26,7 @@ class SimBridge:
         # Failure support arrived with Phase 2; degrade gracefully on an older
         # a320_sim build. The catalog maps id -> description for the E/WD.
         self.supports_failures = hasattr(self.sim, "inject_failure")
+        self.supports_ecam = hasattr(self.sim, "read_ecam")
         self.failure_catalog: dict[str, str] = {}
         if self.supports_failures:
             self.failure_catalog = {
@@ -59,8 +60,16 @@ class SimBridge:
         active = ()
         if self.supports_failures:
             active = tuple(sorted(self.sim.active_failures()))
+        ecam = ()
+        if self.supports_ecam:
+            # Already severity-ordered by the core (D-014's rule engine).
+            ecam = tuple(
+                (w["severity"], w["message"], w["source"])
+                for w in self.sim.read_ecam()
+            )
         return SimState(
             t=self.sim.sim_time(),
             vars=self.sim.get(self._vars) if self._vars else {},
             active_failures=active,
+            ecam=ecam,
         )

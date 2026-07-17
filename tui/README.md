@@ -21,15 +21,21 @@ colors, box-drawing and mouse support.
 
 ## Layout & keys
 
-- **OVERHEAD · ELEC** (left): Korry-style pushbuttons built data-driven from
-  the core's curated control catalog. Click (or focus + Enter) to actuate.
-  The `WORLD` section holds scenario controls (GPU plugged), not cockpit
-  hardware.
+- **OVERHEAD · ELEC (35VU)** (left): the real A320 panel geometry — COMMERCIAL
+  and GALY & CAB stacked far left, live battery voltmeters between the BAT 1/2
+  pushbuttons, AC ESS FEED, the painted green bus mimic, and the sources row
+  IDG 1 · GEN 1 · APU GEN · BUS TIE · EXT PWR · GEN 2 · IDG 2. Click (or focus
+  + Enter) to actuate. IDG positions are inert (the sim does not model them,
+  and they say so). Lights show FBW's *raw* pushbutton flags — the FWC-gated
+  view is the E/WD's job. The `WORLD` section holds scenario controls (GPU
+  plugged), not cockpit hardware.
 - **SD · ELEC** (right): buses green when powered, amber when not; TRs and
   sources green when their output is normal. Links are green only when both
   ends are alive (an approximation of flow, not contactor-accurate routing).
-- **E/WD**: lists injected failures (raw ground truth) until `read_ecam`
-  (#15) provides real FWC detection.
+- **E/WD**: the ECAM lines from `read_ecam` (red warnings, amber cautions,
+  severity-ordered; `derived` rules carry their marker), plus the injected
+  ground truth in dim below — the harness operator sees both; the MCP agent
+  sees only the ECAM.
 - **Command line** (bottom): the REPL grammar (`set`, `get`, `step`, `env`,
   `fail`, `unfail`, `failures`, ...). `watch` and unbounded `run` are
   disabled — the TUI is already a live watch.

@@ -21,10 +21,10 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class ButtonSpec:
-    control: str            # friendly name for sim.set (from list_controls)
+    control: str            # name for sim.set: friendly (catalog) or raw LVAR
     legend: str             # panel legend, e.g. "BAT 1"
-    style: str              # "auto_off" | "on_off" | "on_avail" | "world"
-    state_var: str          # pushbutton position LVAR (1 = pressed/auto/on)
+    style: str              # "auto_off" | "on_off" | "on_avail" | "normal_altn" | "world"
+    state_var: str          # pushbutton position LVAR (1 = pressed/auto/on/normal)
     fault_var: Optional[str] = None   # amber FAULT light, if the pb has one
     avail_var: Optional[str] = None   # green AVAIL light (ext pwr style)
 
@@ -76,6 +76,66 @@ BUTTON_OVERLAYS: dict[str, ButtonSpec] = {
 }
 
 
+# Panel hardware FBW models that is NOT in the curated catalog (yet). These
+# actuate through the documented raw-LVAR path of `sim.set` (D-008/D-009) —
+# the same thing `set OVHD_...` does in the REPL. They exist so the overhead
+# geometry can match the real 35VU panel; if one graduates into the catalog,
+# its overlay moves to BUTTON_OVERLAYS and this entry is deleted.
+#
+# Verified against the vendored Rust (a320_systems/src/electrical/mod.rs):
+#   :283  ac_ess_feed  NormalAltnFaultPushButton::new_normal("ELEC_AC_ESS_FEED")
+#   :284  galy_and_cab AutoOffFaultPushButton::new_auto("ELEC_GALY_AND_CAB")
+#   :286  commercial   OnOffFaultPushButton::new_on("ELEC_COMMERCIAL")
+EXTRA_PANEL_SPECS: dict[str, ButtonSpec] = {
+    "ac_ess_feed": ButtonSpec(
+        "OVHD_ELEC_AC_ESS_FEED_PB_IS_NORMAL", "AC ESS FEED", "normal_altn",
+        "OVHD_ELEC_AC_ESS_FEED_PB_IS_NORMAL",
+        "OVHD_ELEC_AC_ESS_FEED_PB_HAS_FAULT",
+    ),
+    "commercial": ButtonSpec(
+        "OVHD_ELEC_COMMERCIAL_PB_IS_ON", "COMMERCIAL", "on_off",
+        "OVHD_ELEC_COMMERCIAL_PB_IS_ON",
+        "OVHD_ELEC_COMMERCIAL_PB_HAS_FAULT",
+    ),
+    "galy_and_cab": ButtonSpec(
+        "OVHD_ELEC_GALY_AND_CAB_PB_IS_AUTO", "GALY & CAB", "auto_off",
+        "OVHD_ELEC_GALY_AND_CAB_PB_IS_AUTO",
+        "OVHD_ELEC_GALY_AND_CAB_PB_HAS_FAULT",
+    ),
+}
+
+
+# The battery voltmeters between the BAT pushbuttons (live on the real panel).
+BAT_DISPLAY_VARS = ["ELEC_BAT_1_POTENTIAL", "ELEC_BAT_2_POTENTIAL"]
+
+
+# The 35VU ELEC panel geometry, as rows of slot names. Transcribed from the
+# A32NX overhead reference (docs.flybywiresim.com, ELEC-Panel.jpg — used as a
+# *reference*, not committed as an asset: the repo is GPLv3 and terminal cells
+# can't render a photo anyway). Slot kinds:
+#   catalog:<name>  a curated-catalog control (BUTTON_OVERLAYS)
+#   extra:<name>    FBW-modeled hardware outside the catalog (EXTRA_PANEL_SPECS)
+#   bat_display:<n> live voltmeter
+#   prop:<legend>   real-panel position FBW does not model (inert)
+PANEL_TOP_ROW = [
+    "bat_display:1", "catalog:bat_1", "catalog:bat_2", "bat_display:2",
+    "extra:ac_ess_feed",
+]
+PANEL_LEFT_STACK = ["extra:commercial", "extra:galy_and_cab"]
+PANEL_SOURCES_ROW = [
+    "prop:IDG 1", "catalog:gen_1", "catalog:apu_gen", "catalog:bus_tie",
+    "catalog:ext_pwr", "catalog:gen_2", "prop:IDG 2",
+]
+
+# Every catalog control the fixed geometry places. Anything else the catalog
+# grows (Phase 4...) lands in an OTHER section instead of silently dropping.
+PLACED_CONTROLS = {
+    slot.split(":", 1)[1]
+    for slot in PANEL_TOP_ROW + PANEL_SOURCES_ROW
+    if slot.startswith("catalog:")
+}
+
+
 def button_specs(controls: list[dict]) -> list[ButtonSpec]:
     """Build the panel from the core's curated catalog, in catalog order.
 
@@ -122,7 +182,12 @@ def manifest_vars(controls: list[dict]) -> list[str]:
     seen: dict[str, None] = {}
     for name in SYNOPTIC_VARS:
         seen.setdefault(name)
+    for name in BAT_DISPLAY_VARS:
+        seen.setdefault(name)
     for spec in button_specs(controls):
+        for name in spec.vars():
+            seen.setdefault(name)
+    for spec in EXTRA_PANEL_SPECS.values():
         for name in spec.vars():
             seen.setdefault(name)
     return list(seen)

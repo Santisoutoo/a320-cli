@@ -17,6 +17,9 @@ class SimState:
     t: float
     vars: Mapping[str, float] = field(default_factory=dict)
     active_failures: Tuple[str, ...] = ()
+    # ECAM lines from read_ecam(), already severity-ordered by the core:
+    # (severity, message, source) — e.g. ("caution", "APU GEN FAULT", "vendor_flag").
+    ecam: Tuple[Tuple[str, str, str], ...] = ()
 
     def value(self, name: str) -> float:
         return self.vars.get(name, 0.0)

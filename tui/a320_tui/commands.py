@@ -12,9 +12,10 @@ Overrides:
 - ``run`` is capped: a ``run 600`` would block the UI for its whole duration.
 - ``quit``/``exit`` request an app shutdown instead of ending a cmdloop that
   is not running.
-- ``fail``/``unfail``/``failures`` are provided here while feat/14 (which adds
-  them to the REPL itself) is unmerged; once it lands these become overrides
-  of the same commands and can be dropped.
+
+``fail``/``unfail``/``failures``/``ecam`` need no overrides: Phase 2 added them
+to the REPL itself, and the embedded grammar inherits them (the duplicates this
+module carried while feat/14 was in flight are gone).
 """
 
 from __future__ import annotations
@@ -72,51 +73,3 @@ class EmbeddedRepl(A320Repl):
         self.quit_requested = True
         self.stdout.write("bye\n")
         return True
-
-    # --- failures (mirrors feat/14; drop when it merges) ----------------------
-    def _require_failures(self) -> bool:
-        if not hasattr(self.sim, "inject_failure"):
-            self._error("this a320_sim build has no failure support")
-            return False
-        return True
-
-    def do_fail(self, arg: str) -> None:
-        """fail <id>  -- inject a failure by its stable id (see 'failures')."""
-        parts = self._split(arg)
-        if len(parts) != 1:
-            self._error("usage: fail <id>   (e.g. fail elec.tr.1)")
-            return
-        if not self._require_failures():
-            return
-        try:
-            self.sim.inject_failure(parts[0])
-        except a320_sim.SimError as exc:
-            self._error(str(exc))
-            return
-        self.stdout.write(f"  injected {parts[0]}\n")
-
-    def do_unfail(self, arg: str) -> None:
-        """unfail <id>  -- clear an injected failure by its id."""
-        parts = self._split(arg)
-        if len(parts) != 1:
-            self._error("usage: unfail <id>   (e.g. unfail elec.tr.1)")
-            return
-        if not self._require_failures():
-            return
-        try:
-            self.sim.clear_failure(parts[0])
-        except a320_sim.SimError as exc:
-            self._error(str(exc))
-            return
-        self.stdout.write(f"  cleared {parts[0]}\n")
-
-    def do_failures(self, arg: str) -> None:
-        """failures  -- list injectable failures, marking the active ones."""
-        if not self._require_failures():
-            return
-        active = set(self.sim.active_failures())
-        catalog = sorted(self.sim.list_failures(), key=lambda f: f["id"])
-        id_w = max(len(f["id"]) for f in catalog)
-        for f in catalog:
-            mark = "*" if f["id"] in active else " "
-            self.stdout.write(f"{mark} {f['id']:<{id_w}}  {f['description']}\n")
