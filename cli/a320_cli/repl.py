@@ -9,8 +9,9 @@ Design notes
   present the REPL still runs — you just lose tab-completion.
 - **No simulation logic here.** Every command is a 1:1 mapping onto the API
   (``set``/``get``/``step``/``run``/``set_environment``/``snapshot``/
-  ``list_variables``/``list_controls``). This is the human window onto the same
-  core the MCP server drives.
+  ``list_variables``/``list_controls``/``inject_failure``/``clear_failure``/
+  ``list_failures``). This is the human window onto the same core the MCP server
+  drives.
 - **Errors never leak a traceback.** Every core call is wrapped; ``SimError``
   (unknown control, bad value) and bad user input print a one-line, actionable
   message and return to the prompt.
@@ -101,6 +102,9 @@ class A320Repl(cmd.Cmd):
         self._control_names = sorted(c["name"] for c in self._controls)
         # Both friendly names and raw LVARs are valid `set` targets.
         self._control_lvars = sorted(c["lvar"] for c in self._controls)
+        # Same for the failure catalog: cached for listing + completion.
+        self._failures = self.sim.list_failures()
+        self._failure_ids = sorted(f["id"] for f in self._failures)
         if not _HAS_READLINE:
             self.stdout.write(
                 "note: readline not available; tab-completion is disabled.\n"
@@ -324,6 +328,83 @@ class A320Repl(cmd.Cmd):
         for name in sorted(names):
             self.stdout.write(f"  {name}\n")
         self.stdout.write(f"  ({len(names)} variables)\n")
+
+    # --- failures (issue #14) -----------------------------------------------
+    def do_fail(self, arg: str) -> None:
+        """fail <id>  -- inject a failure by its stable id.
+
+        Takes effect on the next tick, so follow it with 'run 2' (or 'watch') to
+        let the systems settle and reconfigure. Use 'failures' to list the ids.
+        Tab-completes.
+
+        Example:
+          fail elec.tr.1
+          run 2
+          get ELEC_TR_1_POTENTIAL_NORMAL ELEC_DC_1_BUS_IS_POWERED
+        """
+        parts = self._split(arg)
+        if len(parts) != 1:
+            self._error("usage: fail <id>   (e.g. fail elec.tr.1)")
+            return
+        try:
+            self.sim.inject_failure(parts[0])
+        except a320_sim.SimError as exc:
+            self._error(str(exc))
+            return
+        self.stdout.write(f"  injected {parts[0]}  (advance time to see it take effect)\n")
+
+    def complete_fail(self, text, line, begidx, endidx):
+        return self._complete_failure(text, line, begidx)
+
+    def do_unfail(self, arg: str) -> None:
+        """unfail <id>  -- clear an injected failure by its id.
+
+        Idempotent: clearing a failure that is not active is not an error.
+        Like 'fail', it takes effect on the next tick.
+
+        Example:  unfail elec.tr.1
+        """
+        parts = self._split(arg)
+        if len(parts) != 1:
+            self._error("usage: unfail <id>   (e.g. unfail elec.tr.1)")
+            return
+        try:
+            self.sim.clear_failure(parts[0])
+        except a320_sim.SimError as exc:
+            self._error(str(exc))
+            return
+        self.stdout.write(f"  cleared {parts[0]}\n")
+
+    def complete_unfail(self, text, line, begidx, endidx):
+        # Completing over the active set would be nicer, but clearing an
+        # inactive failure is a no-op anyway, so the full catalog is fine.
+        return self._complete_failure(text, line, begidx)
+
+    def _complete_failure(self, text, line, begidx):
+        parts = line[:begidx].split()
+        if len(parts) > 1:  # only the first argument is an id
+            return []
+        return [i for i in self._failure_ids if i.startswith(text)]
+
+    def do_failures(self, arg: str) -> None:
+        """failures  -- list the injectable failures, marking the active ones.
+
+        The ids are stable and ours: they keep meaning the same thing across
+        vendor updates. 'ata' is the equivalent id FBW uses, for cross-reference.
+        """
+        active = set(self.sim.active_failures())
+        catalog = sorted(self._failures, key=lambda f: (f["group"], f["id"]))
+        id_w = max(len(f["id"]) for f in catalog)
+        for f in catalog:
+            mark = "*" if f["id"] in active else " "
+            self.stdout.write(
+                f"{mark} {f['id']:<{id_w}}  {f['group']}  (ata {f['ata']})\n"
+                f"      {f['description']}\n"
+            )
+        if active:
+            self.stdout.write(f"  ({len(active)} active, marked with *)\n")
+        else:
+            self.stdout.write("  (none active)\n")
 
     def do_watch(self, arg: str) -> None:
         """watch <var> [<var> ...]  -- live view while time advances.

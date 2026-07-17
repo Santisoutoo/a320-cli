@@ -13,10 +13,11 @@
 //! - [`Sim::snapshot`] — volcado completo del estado.
 //! - [`Sim::list_variables`] — descubrimiento crudo (todo el registro).
 //! - [`Sim::list_controls`] — descubrimiento curado (catálogo de controles, #10).
+//! - [`Sim::inject_failure`] / [`Sim::clear_failure`] / [`Sim::list_failures`] —
+//!   inyección de fallos (Fase 2, #14).
 //!
-//! `read_ecam()` y la inyección/limpieza de fallos son de **Fase 2** (#14, #15):
-//! se les deja sitio (los errores y la fachada no cierran la puerta), pero no se
-//! stubbean aquí.
+//! `read_ecam()` es de **Fase 2** también (#15): se le deja sitio, pero no se
+//! stubbea aquí.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,6 +25,7 @@ use std::fmt;
 use systems::simulation::StartState;
 
 use crate::controls::{self, Control};
+use crate::failures::{self, FailureDef};
 use crate::runtime::Runtime;
 
 /// Errores de la API, tipados y con mensaje útil: un REPL y un LLM necesitan
@@ -39,6 +41,9 @@ pub enum ApiError {
         value: f64,
         reason: String,
     },
+    /// Id de fallo que no está en el catálogo (issue #14).
+    /// Usa [`Sim::list_failures`] para descubrir los ids válidos.
+    UnknownFailure { id: String },
 }
 
 impl fmt::Display for ApiError {
@@ -53,6 +58,10 @@ impl fmt::Display for ApiError {
                 value,
                 reason,
             } => write!(f, "bad value {value} for control '{name}': {reason}"),
+            ApiError::UnknownFailure { id } => write!(
+                f,
+                "unknown failure '{id}' (not in the failure catalog; use list_failures() to discover valid ids)"
+            ),
         }
     }
 }
@@ -203,6 +212,51 @@ impl Sim {
     /// la CLI usa para autocompletar y el MCP para el esquema de `set_control`.
     pub fn list_controls(&self) -> Vec<Control> {
         controls::CATALOG.to_vec()
+    }
+
+    /// Catálogo curado de fallos inyectables (issue #14).
+    ///
+    /// Los ids son **nuestros y estables** (`elec.tr.1`), no la forma interna del
+    /// enum de FBW: es lo que permite escribirlos en un escenario del benchmark
+    /// y que sigan significando lo mismo tras un bump del pin del vendor.
+    pub fn list_failures(&self) -> Vec<FailureDef> {
+        failures::CATALOG.to_vec()
+    }
+
+    /// Activa un fallo por su id del catálogo.
+    ///
+    /// Surte efecto en el siguiente tick. Idempotente. Error
+    /// [`ApiError::UnknownFailure`] si el id no está catalogado (nunca un panic).
+    pub fn inject_failure(&mut self, id: &str) -> Result<(), ApiError> {
+        let def =
+            failures::by_id(id).ok_or_else(|| ApiError::UnknownFailure { id: id.to_owned() })?;
+        self.runtime.inject_failure(def.failure_type);
+        Ok(())
+    }
+
+    /// Desactiva un fallo por su id del catálogo.
+    ///
+    /// Idempotente: limpiar un fallo no activo es un no-op (no un error).
+    pub fn clear_failure(&mut self, id: &str) -> Result<(), ApiError> {
+        let def =
+            failures::by_id(id).ok_or_else(|| ApiError::UnknownFailure { id: id.to_owned() })?;
+        self.runtime.clear_failure(def.failure_type);
+        Ok(())
+    }
+
+    /// Ids de los fallos activos ahora mismo, ordenados.
+    ///
+    /// El runtime guarda `FailureType` (lo que el vendor entiende); esto lo
+    /// traduce de vuelta a ids nuestros, que es lo único que la API expone.
+    pub fn active_failures(&self) -> Vec<&'static str> {
+        let mut ids: Vec<&'static str> = self
+            .runtime
+            .active_failures()
+            .iter()
+            .filter_map(|ft| failures::id_of(*ft))
+            .collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Tiempo de simulación acumulado en segundos (monótono).
@@ -357,6 +411,58 @@ mod tests {
         }
         // El rechazo también aplica por LVAR crudo del catálogo.
         assert!(sim.set(BAT_1, 2.0).is_err());
+    }
+
+    #[test]
+    fn unknown_failure_id_is_a_typed_error() {
+        let mut sim = Sim::new();
+        let err = sim.inject_failure("elec.tr.99").unwrap_err();
+        match err {
+            ApiError::UnknownFailure { ref id } => assert_eq!(id, "elec.tr.99"),
+            ref other => panic!("esperaba UnknownFailure, fue {other:?}"),
+        }
+        // El mensaje debe decir cómo descubrir los ids válidos.
+        assert!(err.to_string().contains("list_failures"));
+        // Y clear_failure se comporta igual (no panic).
+        assert!(matches!(
+            sim.clear_failure("nope").unwrap_err(),
+            ApiError::UnknownFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn list_failures_exposes_the_curated_catalog() {
+        let sim = Sim::new();
+        let fs = sim.list_failures();
+        assert!(!fs.is_empty());
+        assert!(fs.iter().any(|f| f.id == "elec.tr.1"));
+        // Todos los de Fase 2 son del grupo eléctrico.
+        assert!(fs
+            .iter()
+            .all(|f| f.group == crate::failures::FailureGroup::Elec));
+    }
+
+    #[test]
+    fn active_failures_tracks_injection_and_clearing() {
+        let mut sim = Sim::new();
+        assert!(sim.active_failures().is_empty(), "arranca sin fallos");
+
+        sim.inject_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.tr.1"]);
+
+        // Idempotente: inyectar dos veces no duplica.
+        sim.inject_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.tr.1"]);
+
+        sim.inject_failure("elec.gen.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.gen.1", "elec.tr.1"]);
+
+        sim.clear_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.gen.1"]);
+
+        // Idempotente también al limpiar algo no activo.
+        sim.clear_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.gen.1"]);
     }
 
     #[test]

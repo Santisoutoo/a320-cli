@@ -117,6 +117,65 @@ def test_list_controls_exposes_curated_catalog():
     assert by_name["ext_pwr_avail"]["domain"] == "world"
 
 
+def test_list_failures_exposes_curated_catalog():
+    """list_failures devuelve el catálogo de fallos como dicts triviales."""
+    sim = a320_sim.Sim()
+
+    failures = sim.list_failures()
+    assert isinstance(failures, list)
+    assert len(failures) > 0
+
+    by_id = {f["id"]: f for f in failures}
+    for fid in ("elec.tr.1", "elec.gen.1", "elec.apu_gen.1", "elec.bus.ac.1"):
+        assert fid in by_id, f"falta el fallo '{fid}'"
+
+    tr_1 = by_id["elec.tr.1"]
+    assert set(tr_1) == {"id", "ata", "description", "group"}
+    # Todo str por el FFI, incluido el id numérico ATA.
+    assert all(isinstance(v, str) for v in tr_1.values())
+    assert tr_1["ata"] == "24000"
+    assert tr_1["group"] == "ELEC"
+
+
+def test_inject_and_clear_failure():
+    """Inyectar un fallo por id cambia el avión; limpiarlo lo revierte."""
+    sim = a320_sim.Sim()
+    tr_1_normal = "ELEC_TR_1_POTENTIAL_NORMAL"
+
+    # Red AC viva vía ext pwr (el TR 1 necesita AC para dar potencial normal).
+    sim.set(BAT_1, 1)
+    sim.set(BAT_2, 1)
+    sim.set("bus_tie", 1)
+    sim.set("ext_pwr_avail", 1)
+    sim.set("ext_pwr", 1)
+    sim.run(2.0, 5.0)
+    assert sim.get([tr_1_normal])[tr_1_normal] == 1.0, "precondición: TR 1 normal"
+    assert sim.active_failures() == []
+
+    sim.inject_failure("elec.tr.1")
+    sim.run(2.0, 5.0)
+    assert sim.active_failures() == ["elec.tr.1"]
+    assert sim.get([tr_1_normal])[tr_1_normal] == 0.0, "TR 1 fallado"
+
+    sim.clear_failure("elec.tr.1")
+    sim.run(2.0, 5.0)
+    assert sim.active_failures() == []
+    assert sim.get([tr_1_normal])[tr_1_normal] == 1.0, "TR 1 recuperado"
+
+
+def test_unknown_failure_raises():
+    """Un id de fallo desconocido lanza UnknownFailureError, no un panic."""
+    sim = a320_sim.Sim()
+    try:
+        sim.inject_failure("elec.tr.99")
+    except a320_sim.UnknownFailureError as exc:
+        assert "unknown failure" in str(exc)
+        assert "list_failures" in str(exc)
+        assert isinstance(exc, a320_sim.SimError)
+    else:
+        raise AssertionError("se esperaba UnknownFailureError")
+
+
 def test_environment_and_sim_time():
     """set_environment se refleja en las simvars; sim_time avanza."""
     sim = a320_sim.Sim()

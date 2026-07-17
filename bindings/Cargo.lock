@@ -15,6 +15,7 @@ name = "a320-sim-core"
 version = "0.1.0"
 dependencies = [
  "a320_systems",
+ "rustc-hash",
  "systems",
  "uom",
 ]
