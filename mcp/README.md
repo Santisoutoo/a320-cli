@@ -25,8 +25,16 @@ a320-mcp                        # cold & dark (default)
 a320-mcp --start apu-running    # APU started and feeding the AC network
 ```
 
-The server speaks **stdio**, so you don't run it by hand — a client launches it.
-Point one at it with:
+The server speaks **stdio**, so you don't normally run it by hand — a client
+launches it and talks over the pipe.
+
+`--start apu-running` takes ~60 s of *simulated* time at boot (a few seconds of
+wall clock) to spin the APU up before serving. The scenario is the harness's
+job, not the agent's.
+
+## Point a client at it
+
+The repo ships a [`.mcp.json`](../.mcp.json) that registers this server:
 
 ```json
 {
@@ -39,9 +47,19 @@ Point one at it with:
 }
 ```
 
-`--start apu-running` takes ~60 s of *simulated* time at boot (a few seconds of
-wall clock) to spin the APU up before serving. The scenario is the harness's
-job, not the agent's.
+The client spawns `a320-mcp`, so **it has to be on the PATH of the process that
+launches the client** — activate the virtualenv you installed it into before
+starting the client, or point `command` at the executable directly
+(`.venv/Scripts/a320-mcp.exe` on Windows, `.venv/bin/a320-mcp` elsewhere).
+
+MCP servers are read at client startup, so a client that was already running
+won't see it until you restart it.
+
+Then hand it the scenario:
+
+> The APU generator just failed. Deal with it.
+
+The agent has the ECAM and the switches — and nothing that tells it what broke.
 
 ## Tools
 
@@ -80,19 +98,32 @@ What a client sees driving the `apu-running` scenario:
   [{"message": "AC ESS BUS FAULT", "severity": "caution", "system": "ELEC", "source": "vendor_flag"},
    {"message": "APU GEN FAULT",    "severity": "caution", "system": "ELEC", "source": "vendor_flag"}]
 
-> read_state ["ELEC_AC_1_BUS_IS_POWERED", "ELEC_DC_ESS_BUS_IS_POWERED"]
-  {"ELEC_AC_1_BUS_IS_POWERED": 0.0,       # the only AC source is gone
-   "ELEC_DC_ESS_BUS_IS_POWERED": 1.0}     # batteries keep the ECAM readable
+> snapshot "_BUS_IS_POWERED"
+  {"ELEC_AC_1_BUS_IS_POWERED": 0.0,       # the whole AC network is gone...
+   "ELEC_AC_2_BUS_IS_POWERED": 0.0,
+   "ELEC_AC_ESS_BUS_IS_POWERED": 0.0,
+   "ELEC_DC_1_BUS_IS_POWERED": 0.0,       # ...and DC 1/2 with it: they feed via the TRs
+   "ELEC_DC_2_BUS_IS_POWERED": 0.0,
+   "ELEC_DC_BAT_BUS_IS_POWERED": 1.0,     # batteries hold the essential DC —
+   "ELEC_DC_ESS_BUS_IS_POWERED": 1.0}     # which is why the ECAM is still readable
 
-> set_control ext_pwr_avail 1 ; set_control ext_pwr 1
+> set_control apu_gen 0                   # the faulty source out of the loop
+> set_control ext_pwr_avail 1             # ask for a GPU
+> set_control ext_pwr 1                   # put it on the network
 > advance 3
 > read_ecam
-  []                                      # network restored
+  []                                      # clear: AC 1/2/ESS and DC 1/2 all back
 ```
 
 Losing the APU generator raises *two* cautions — the source fault and the
 downstream AC ESS bus — because it was the only AC source. That cascade is the
 scenario, and dealing with it is the task.
+
+The engine generators are no help here (no engines running), so on the ground the
+answer is external power. Note `ext_pwr_avail` is a `world` control, not a cockpit
+one: a real crew asks for a ground power unit, they don't plug it in themselves.
+A Phase 5 scenario should pre-set its world state rather than hand it to the agent
+— see the Phase 3 closure note in [docs/decisiones.md](../docs/decisiones.md).
 
 ## Tests
 

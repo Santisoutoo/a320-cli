@@ -205,6 +205,17 @@ Entregado en los PRs #47 (inyección de fallos, #14), #48 (`read_ecam`, #15) y #
 
 **Siguiente**: Fase 3 (servidor MCP, issue #17). La superficie que expone (`set`/`get`/`step`/fallos/`read_ecam`/descubrimiento) ya está completa y probada en los bindings; la Fase 3 es sentar a un LLM en la silla.
 
+### Fase 3 cerrada — 2026-07-17
+Criterio de éxito cumplido: **un LLM resolvió el fallo del APU GEN usando solo los tools**. Partiendo del escenario `--start apu-running` con la ECAM limpia, inyectado el fallo, el agente leyó la ECAM (`APU GEN FAULT` + `AC ESS BUS FAULT`), diagnosticó desde el estado (toda la red AC muerta; DC 1/2 caídos con ella porque se alimentan vía TR; baterías sosteniendo DC BAT/ESS/HOT), descartó los generadores de motor (no hay motores girando), y ejecutó el procedimiento: APU GEN pb OFF → GPU → EXT PWR ON → `advance` → ECAM limpia y red entera recuperada.
+
+Entregado en los PRs #52 (servidor, #51) y #NN (demo, #17). Decisiones: D-015 (FastMCP v1 sobre stdio, tools síncronos en un solo hilo), D-016 (qué NO se expone), D-017 (esquemas desde los catálogos; escenario montado por el arnés). Lección L-005. `core-rs` sin tocar: pin del vendor `13bce4b` intacto.
+
+**Lo que el demo demuestra y lo que no.** Demuestra que el entorno **sabe plantear un problema resoluble y observable**: hay una cascada real, la ECAM la reporta, y el bucle observar→razonar→actuar→avanzar se cierra por el protocolo real. **No** es un baseline: quien lo condujo ya había visto que ext pwr recupera la red al verificar el ejemplo del README, así que no era un sujeto ciego. La evaluación ciega con ≥2 modelos es la Fase 5, y es justo la distinción que separa "demo" de "benchmark".
+
+**Hallazgo del demo — `ext_pwr_avail` es `domain: world` y estaba en manos del agente.** Para recuperar la red, el agente tuvo que "enchufar la GPU" él mismo. En el avión real la tripulación no puede: pediría una GPU y alguien la enchufaría. La distinción cabina/mundo de D-009 existe precisamente para marcar esto, pero el servidor expone los dos dominios por igual. **Consecuencia para la Fase 5**: un escenario debe fijar su estado de mundo por adelantado (como hace `--start`) y **no** ofrecer los controles `world` al agente, o estará midiendo si el agente adivina que puede alterar el mundo exterior en vez de si sabe el procedimiento. Es exactamente la clase de detalle que solo aparece conduciendo el bucle, no leyéndolo.
+
+**Siguiente**: Fase 4 (#18, hidráulico + APU + fuel + arranque de motores). El APU es el candidato más barato: ya está probado y arrancable, pero sus pulsadores solo son accionables por LVAR crudo — catalogarlos cerraría el hueco que la tabla de sistemas dejó ver.
+
 ## Abiertas
 
 *(ninguna)*
