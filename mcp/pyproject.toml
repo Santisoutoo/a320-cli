@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a320-mcp"
+version = "0.1.0"
+description = "MCP server exposing the headless A320 systems core to LLM agents"
+readme = "README.md"
+# El SDK de MCP exige >=3.10; el resto de paquetes del repo declaran >=3.9.
+# Solo sube el piso de ESTE paquete: bindings y CLI siguen en 3.9.
+requires-python = ">=3.10"
+# GPLv3: el servidor conduce la extensión a320_sim, que enlaza los crates
+# vendorizados de FBW y hereda su licencia.
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Santiago Souto" }]
+keywords = ["a320", "flybywire", "simulation", "mcp", "llm", "agent", "benchmark"]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    # El core Rust expuesto a Python. No está en PyPI: se instala antes desde el
+    # crate hermano con `pip install -e bindings/` (módulo: a320_sim).
+    "a320-sim",
+    # SDK oficial de MCP. El tope `<2` no es cautela genérica: la 2.0 (en alfa)
+    # cambia la API — su README ya documenta `MCPServer` en vez de `FastMCP` —,
+    # y el propio PyPI recomienda fijar `<2` antes de que salga la estable.
+    "mcp>=1.28,<2",
+]
+
+[project.scripts]
+a320-mcp = "a320_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/Santisoutoo/a320-cli"
+Repository = "https://github.com/Santisoutoo/a320-cli"
+
+[tool.setuptools]
+packages = ["a320_mcp"]

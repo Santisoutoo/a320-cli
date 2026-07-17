@@ -48,7 +48,7 @@ focus · `ctrl+q` quit.
 
 ## Design notes
 
-See `docs/faseT-tui.md` and decision D-014 in `docs/decisiones.md`. The rules
+See `docs/faseT-tui.md` and decision D-018 in `docs/decisiones.md`. The rules
 that matter: `a320_sim.Sim` is unsendable, so all sim access stays on the main
 event-loop thread (`SimBridge` asserts this); the tick reads a selective `get`
 manifest (~30 vars), never `snapshot()`.

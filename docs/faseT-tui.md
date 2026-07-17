@@ -1,6 +1,6 @@
 # Fase T — TUI: cockpit en terminal sobre `a320_sim`
 
-Nota de diseño de la fase T (track paralelo de frontend; decisión [D-014](decisiones.md)).
+Nota de diseño de la fase T (track paralelo de frontend; decisión [D-018](decisiones.md)).
 Estado: **PoC funcional** en `feat/tui-poc`. La fase completa (issues, tests Pilot
 exhaustivos, captura en el README) queda pendiente de abrir su EPIC.
 

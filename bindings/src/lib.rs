@@ -7,8 +7,8 @@
 //! útil; ningún panic cruza el FFI.
 //!
 //! Esta capa no tiene lógica de simulación: es un envoltorio 1:1 del contrato de
-//! `api::Sim`. `list_controls()` (issue #10/#12) ya está expuesto; los fallos +
-//! `read_ecam()` (Fase 2) se añadirán cuando existan en el core; no se stubbean.
+//! `api::Sim`. `list_controls()` (issue #10/#12), la inyección de fallos (#14) y
+//! `read_ecam()` (#15) están expuestos; la superficie es 1:1 con el core.
 
 use std::collections::BTreeMap;
 
@@ -38,14 +38,26 @@ create_exception!(
     SimError,
     "Valor no admisible para un control (p. ej. NaN o infinito)."
 );
+create_exception!(
+    a320_sim,
+    UnknownFailureError,
+    SimError,
+    "Id de fallo ausente del catálogo (usa list_failures() para descubrir los válidos)."
+);
 
 /// Traduce un `ApiError` del core a la excepción Python correspondiente,
 /// preservando el mensaje del `Display`.
+///
+/// El `match` es **exhaustivo a propósito** (sin brazo `_ =>`): una variante
+/// nueva en `ApiError` debe romper la compilación justo aquí, que es donde hay
+/// que decidir qué excepción ve Python. Un catch-all convertiría ese momento en
+/// un `SimError` genérico silencioso.
 fn to_pyerr(err: ApiError) -> PyErr {
     let msg = err.to_string();
     match err {
         ApiError::UnknownControl { .. } => UnknownControlError::new_err(msg),
         ApiError::BadValue { .. } => BadValueError::new_err(msg),
+        ApiError::UnknownFailure { .. } => UnknownFailureError::new_err(msg),
     }
 }
 
@@ -151,6 +163,78 @@ impl PySim {
             .collect()
     }
 
+    /// Catálogo curado de fallos inyectables (issue #14).
+    ///
+    /// Lista de dicts, uno por fallo, todo `str` para cruzar el FFI: `id` (el
+    /// identificador estable nuestro, p. ej. `elec.tr.1`), `ata` (el id numérico
+    /// que usa FBW para el mismo fallo, para cruzar con upstream),
+    /// `description` y `group` (sistema).
+    fn list_failures(&self) -> Vec<BTreeMap<String, String>> {
+        self.inner
+            .list_failures()
+            .into_iter()
+            .map(|f| {
+                let mut d = BTreeMap::new();
+                d.insert("id".to_owned(), f.id.to_owned());
+                d.insert("ata".to_owned(), f.ata.to_string());
+                d.insert("description".to_owned(), f.description.to_owned());
+                d.insert("group".to_owned(), f.group.as_str().to_owned());
+                d
+            })
+            .collect()
+    }
+
+    /// Activa un fallo por su id del catálogo. Surte efecto en el siguiente tick.
+    ///
+    /// Lanza `UnknownFailureError` si el id no está catalogado.
+    fn inject_failure(&mut self, id: &str) -> PyResult<()> {
+        self.inner.inject_failure(id).map_err(to_pyerr)
+    }
+
+    /// Desactiva un fallo por su id. Idempotente (limpiar uno inactivo no falla).
+    ///
+    /// Lanza `UnknownFailureError` si el id no está catalogado.
+    fn clear_failure(&mut self, id: &str) -> PyResult<()> {
+        self.inner.clear_failure(id).map_err(to_pyerr)
+    }
+
+    /// Ids de los fallos activos ahora mismo, ordenados.
+    fn active_failures(&self) -> Vec<String> {
+        self.inner
+            .active_failures()
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Warnings/cautions activos en la ECAM, ordenados por severidad (issue #15).
+    ///
+    /// Lista de dicts, todo `str` para cruzar el FFI: `id`, `message` (el texto
+    /// tal como lo mostraría la ECAM), `severity` (`warning`/`caution`/
+    /// `advisory`), `system` y `source`.
+    ///
+    /// `source` distingue si la lógica del warning la calcula FBW
+    /// (`vendor_flag`) o es una regla nuestra (`derived`): no hay FWC en el Rust
+    /// de FBW, así que el catálogo es nuestro y conviene que el consumidor sepa
+    /// de dónde viene cada mensaje. Ver `docs/fase2-ecam.md`.
+    ///
+    /// Devuelve `[]` si la ECAM no está alimentada (cold & dark).
+    fn read_ecam(&self) -> Vec<BTreeMap<String, String>> {
+        self.inner
+            .read_ecam()
+            .into_iter()
+            .map(|w| {
+                let mut d = BTreeMap::new();
+                d.insert("id".to_owned(), w.id.to_owned());
+                d.insert("message".to_owned(), w.message.to_owned());
+                d.insert("severity".to_owned(), w.severity.as_str().to_owned());
+                d.insert("system".to_owned(), w.system.as_str().to_owned());
+                d.insert("source".to_owned(), w.source.as_str().to_owned());
+                d
+            })
+            .collect()
+    }
+
     /// Tiempo de simulación acumulado en segundos (monótono).
     fn sim_time(&self) -> f64 {
         self.inner.sim_time()
@@ -171,6 +255,10 @@ fn a320_sim(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.py().get_type::<UnknownControlError>(),
     )?;
     m.add("BadValueError", m.py().get_type::<BadValueError>())?;
+    m.add(
+        "UnknownFailureError",
+        m.py().get_type::<UnknownFailureError>(),
+    )?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

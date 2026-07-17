@@ -30,10 +30,22 @@
 //! slice eléctrico esto ES el cold & dark puro (de hecho el spike tenía que
 //! forzar los pulsadores de batería a `false` precisamente para deshacer lo que
 //! el seeding los había puesto en AUTO). Ver `docs/decisiones.md` (D-007).
+//!
+//! ## Nota sobre los fallos (Fase 2, #14)
+//!
+//! Los fallos **no viven en el store**: el vendor los propaga por un canal
+//! aparte (`Simulation::update_active_failures` → `receive_failure` en cada
+//! `SimulationElement`), no por el ciclo read/write de variables. Y el contrato
+//! es **declarativo**: cada llamada reemplaza el conjunto activo entero, no es
+//! un toggle. Por eso el runtime es el dueño del `FxHashSet<FailureType>` y lo
+//! reenvía en cada tick — el mismo patrón que usa el test bed de FBW
+//! (`test.rs:329-339`), pero sin el test bed.
 
 use std::time::Duration;
 
 use a320_systems::A320;
+use rustc_hash::FxHashSet;
+use systems::failures::FailureType;
 use systems::simulation::{Simulation, StartState};
 
 use crate::environment::Environment;
@@ -53,6 +65,8 @@ pub struct Runtime {
     /// Tiempo de simulación acumulado, en segundos. Monótono creciente.
     sim_time: f64,
     start_state: StartState,
+    /// Conjunto de fallos activos; se reenvía entero al avión cada tick.
+    active_failures: FxHashSet<FailureType>,
 }
 
 impl Runtime {
@@ -77,6 +91,7 @@ impl Runtime {
             environment,
             sim_time: 0.0,
             start_state,
+            active_failures: FxHashSet::default(),
         };
         // Deja el store en un estado de mundo válido ya antes del primer tick
         // (p. ej. para leer variables sin haber ticado todavía).
@@ -191,9 +206,38 @@ impl Runtime {
     /// `UpdateContext` lo relee cada tick.
     fn tick(&mut self, delta: Duration) {
         self.environment.write_all(&mut self.store);
+        // Los fallos van por su propio canal (no por el store) y el contrato es
+        // declarativo: se reenvía el conjunto entero. Hacerlo aquí —y no solo al
+        // mutar el set— vuelve irrelevante el orden inyectar-antes-de-ticar, que
+        // es justo la clase de trampa que costó el issue #39 con las baterías.
+        self.simulation
+            .update_active_failures(self.active_failures.clone());
         self.simulation
             .tick(delta, self.sim_time, &mut self.store.reader_writer);
         self.sim_time += delta.as_secs_f64();
+    }
+
+    /// Activa un fallo. Idempotente: inyectar dos veces el mismo es un no-op.
+    ///
+    /// Surte efecto en el siguiente tick (el avión solo ve el conjunto cuando la
+    /// simulación avanza).
+    pub fn inject_failure(&mut self, failure_type: FailureType) {
+        self.active_failures.insert(failure_type);
+    }
+
+    /// Desactiva un fallo. Idempotente: limpiar uno no activo es un no-op.
+    pub fn clear_failure(&mut self, failure_type: FailureType) {
+        self.active_failures.remove(&failure_type);
+    }
+
+    /// Desactiva todos los fallos activos.
+    pub fn clear_all_failures(&mut self) {
+        self.active_failures.clear();
+    }
+
+    /// Conjunto de fallos activos ahora mismo.
+    pub fn active_failures(&self) -> &FxHashSet<FailureType> {
+        &self.active_failures
     }
 
     /// Avanza la simulación `dt_ms` milisegundos en un solo tick.
