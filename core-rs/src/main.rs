@@ -31,6 +31,23 @@ fn report(label: &str, state: &BTreeMap<String, f64>) {
     );
 }
 
+/// Vuelca la ECAM tal como la vería el agente (Fase 2, #15).
+fn report_ecam(sim: &Sim) {
+    let ecam = sim.read_ecam();
+    if ecam.is_empty() {
+        println!("                 ECAM: clear");
+        return;
+    }
+    for w in ecam {
+        println!(
+            "                 ECAM: {} {} ({})",
+            w.severity.as_str().to_uppercase(),
+            w.message,
+            w.source.as_str()
+        );
+    }
+}
+
 fn main() {
     let mut sim = Sim::new();
 
@@ -60,13 +77,11 @@ fn main() {
     sim.inject_failure("elec.tr.1").unwrap();
     sim.run(2.0, 5.0);
     report("[fail TR 1]", &sim.get(OBSERVED).unwrap());
-    println!(
-        "                 fallos activos: {:?}",
-        sim.active_failures()
-    );
+    report_ecam(&sim);
 
-    // Y limpiarlo devuelve el TR a su estado normal.
+    // Y limpiarlo devuelve el TR a su estado normal y retira la caution.
     sim.clear_failure("elec.tr.1").unwrap();
     sim.run(2.0, 5.0);
     report("[unfail TR 1]", &sim.get(OBSERVED).unwrap());
+    report_ecam(&sim);
 }

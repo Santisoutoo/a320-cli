@@ -406,6 +406,29 @@ class A320Repl(cmd.Cmd):
         else:
             self.stdout.write("  (none active)\n")
 
+    def do_ecam(self, arg: str) -> None:
+        """ecam  -- show the active ECAM warnings/cautions, worst first.
+
+        This is what an agent (or a pilot) observes and reasons from. A clean
+        ECAM prints 'ECAM clear'. In cold & dark the list is empty because the
+        ECAM is not powered -- as on the real aircraft.
+
+        Each line marks where its logic comes from: [fbw] means the flag is
+        computed by FlyByWire's own model; [ours] means the rule is ours (there
+        is no FWC in the vendored Rust -- see docs/fase2-ecam.md).
+        """
+        warnings = self.sim.read_ecam()
+        if not warnings:
+            self.stdout.write("  ECAM clear\n")
+            return
+        sev_w = max(len(w["severity"]) for w in warnings)
+        for w in warnings:
+            origin = "[fbw]" if w["source"] == "vendor_flag" else "[ours]"
+            self.stdout.write(
+                f"  {w['severity'].upper():<{sev_w}}  {w['message']}  "
+                f"({w['system']})  {origin}\n"
+            )
+
     def do_watch(self, arg: str) -> None:
         """watch <var> [<var> ...]  -- live view while time advances.
 

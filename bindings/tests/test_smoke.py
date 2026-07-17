@@ -176,6 +176,44 @@ def test_unknown_failure_raises():
         raise AssertionError("se esperaba UnknownFailureError")
 
 
+def test_read_ecam_is_clean_in_cold_and_dark():
+    """Sin alimentación no hay ECAM que leer (como en el avión real)."""
+    sim = a320_sim.Sim()
+    sim.run(3.0, 5.0)
+    assert sim.read_ecam() == []
+
+
+def test_read_ecam_raises_the_tr_caution():
+    """Un fallo inyectado aflora como caution estructurada por el FFI."""
+    sim = a320_sim.Sim()
+    sim.set(BAT_1, 1)
+    sim.set(BAT_2, 1)
+    sim.set("bus_tie", 1)
+    sim.set("ext_pwr_avail", 1)
+    sim.set("ext_pwr", 1)
+    sim.run(3.0, 5.0)
+    assert sim.read_ecam() == [], "red sana: ECAM limpia"
+
+    sim.inject_failure("elec.tr.1")
+    sim.run(2.0, 5.0)
+
+    ecam = sim.read_ecam()
+    assert len(ecam) == 1, f"se esperaba una caution, fue {ecam}"
+    w = ecam[0]
+    assert set(w) == {"id", "message", "severity", "system", "source"}
+    assert all(isinstance(v, str) for v in w.values())
+    assert w["id"] == "elec.tr.1.fault"
+    assert w["message"] == "ELEC TR 1 FAULT"
+    assert w["severity"] == "caution"
+    assert w["system"] == "ELEC"
+    # El TR no tiene luz de fault en FBW: la regla es nuestra.
+    assert w["source"] == "derived"
+
+    sim.clear_failure("elec.tr.1")
+    sim.run(2.0, 5.0)
+    assert sim.read_ecam() == [], "la caution se retira al limpiar el fallo"
+
+
 def test_environment_and_sim_time():
     """set_environment se refleja en las simvars; sim_time avanza."""
     sim = a320_sim.Sim()

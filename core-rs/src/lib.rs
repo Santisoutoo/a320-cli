@@ -11,10 +11,12 @@
 //! - [`runtime`]: runtime persistente (tick loop) sobre `Simulation<A320>`.
 //! - [`controls`]: catálogo curado de controles accionables (`list_controls`).
 //! - [`failures`]: catálogo curado de fallos inyectables (`list_failures`).
+//! - [`ecam`]: catálogo de warnings ECAM y su motor de reglas (`read_ecam`).
 //! - [`api`]: capa de control/observación limpia (una API, dos frontends).
 
 pub mod api;
 pub mod controls;
+pub mod ecam;
 pub mod environment;
 pub mod failures;
 pub mod runtime;
