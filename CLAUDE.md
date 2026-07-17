@@ -161,6 +161,12 @@ Re-indexar (`detect_changes` → `index_repository`) tras cambios grandes en `co
 - **La Fase 0 es el riesgo principal.** Hasta que no haya un `main.rs` que instancie el avión, avance 1 s y lea una var eléctrica, no invertir en CLI/MCP.
 - **Decisiones de arquitectura** (p. ej. Rust+PyO3 vs Rust-puro con `rmcp`) se documentan en `docs/decisiones.md` en cuanto se toman.
 
+### Errores graves → `docs/lecciones.md` (obligatorio)
+
+Cuando se cometa un **fallo grave** — un CI rojo evitable, trabajo perdido o un PR/rama rotos, un bug que llegó a `main`, mover el pin del vendor sin registrarlo, una acción destructiva sobre el objetivo equivocado, o cualquier fallo cuya limpieza costó más que la tarea original — se registra en `docs/lecciones.md` **antes de dar la tarea por cerrada**, con el formato del archivo (`L-NNN`: qué pasó, causa raíz y regla de prevención). La entrada no es la autopsia: es la regla accionable que evita la reincidencia.
+
+El registro también se **consulta**: antes de una tarea del mismo tipo que una lección ya registrada (verificación pre-commit, PRs stacked, agentes en paralelo, verificar deliverables de agentes), aplicar su regla. Repetir un fallo ya registrado es peor que cometerlo la primera vez.
+
 ### Skills
 
 - `/compilar-core` — compila y testea `core-rs/` filtrando el ruido del código vendorizado.
