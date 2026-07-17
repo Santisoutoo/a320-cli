@@ -117,10 +117,56 @@ La única vía real hacia `Closed` en tierra es `Open -> Off -> Closed::from_off
 
 Regresión cubierta por `writes_before_the_first_tick_do_not_wedge_the_battery_contactor` (`core-rs/src/runtime.rs`): el caso B del issue (set antes de todo tick) debe comportarse como el caso A (tick primero).
 
+### D-013 — Catálogo de fallos: ids estables propios sobre `FailureType` (issue #14)
+**Fecha**: 2026-07-17 (Fase 2, issue #14)
+La inyección de fallos **no necesita parchear el vendor ni pasar por MSFS**. `Simulation::update_active_failures(FxHashSet<FailureType>)` es público (`fbw-common/.../systems/src/simulation/mod.rs:468`) y es el mismo mecanismo que usa el `SimulationTestBed` de FBW (`test.rs:329-339`). El canal de LVAR/CommBus (`FBW_FAILURE_UPDATE`) que trae `systems_wasm` es un detalle de la capa MSFS y queda fuera de nuestro grafo (D-005 intacto).
+
+**El contrato del vendor es declarativo, no un toggle**: cada llamada reemplaza el conjunto activo entero (`Failure::receive_failure` hace `active_failures.contains(&self.failure_type)`). Por eso el dueño del `FxHashSet<FailureType>` es el `Runtime`, y lo reenvía **en cada tick** (`runtime.rs`, dentro de `tick`, junto a `environment.write_all`). Reenviarlo por tick —y no solo al mutar el set— vuelve irrelevante el orden inyectar-antes-de-ticar, que es exactamente la clase de trampa que costó el issue #39 con las baterías. A diferencia de D-012, aquí no hay riesgo en el tick de init: los fallos no viven en el store y el set arranca vacío, que es el estado correcto.
+
+**Los ids son nuestros y a mano** (`core-rs/src/failures.rs`, `CATALOG`), no la forma del enum de FBW. `FailureType` deriva solo `Clone, Copy, PartialEq, Eq, Hash`: **no `Debug`, no `Serialize`, sin id numérico**. No hay nada que exponer directamente a Python ni al MCP, y su forma cambia con el pin. Un id estable (`elec.tr.1`) se puede escribir en un fichero de escenario de Fase 5 y sigue significando lo mismo tras un bump; el mapeo versionado convierte ese bump en un diff visible (o en un fallo de compilación si una variante desaparece) en vez de una renumeración silenciosa.
+
+**Decisiones concretas**:
+- **Alcance ATA24 (eléctrico), 20 entradas.** Es el único sistema que la Fase 1 sabe observar. Catalogar ahora los ~50 fallos restantes (aire, hidráulico, tren, RA...) sería catalogar ids que ningún test puede ejercitar: un mapeo equivocado no lo notaría nadie. Se amplía por fase.
+- **Campo `ata` copiado de FBW.** La tabla `(u32, FailureType)` de `a320_systems_wasm/src/lib.rs:101-163` es la numeración de FBW; se copia como metadato para poder cruzar cualquier id nuestro con upstream. Es un **dato copiado, no un enlace**: `a320_systems_wasm` no entra en el build nativo.
+- **`Debug` de `FailureDef` a mano**, con `finish_non_exhaustive()`: `FailureType` no es formateable. No se pierde nada — lo legible es nuestro `id`, que es justo lo que el enum del vendor no sabe decir de sí mismo.
+- **`ApiError::UnknownFailure`** en vez de reutilizar `UnknownControl`: un id de fallo y un nombre de control son espacios de nombres distintos, y el mensaje debe apuntar a `list_failures()`, no a `list_variables()`. En los bindings el `match` de `to_pyerr` es exhaustivo sin `_ =>` a propósito: la variante nueva rompe la compilación justo donde hay que decidir la excepción Python (`UnknownFailureError`).
+- **Idempotencia**: inyectar dos veces o limpiar algo no activo son no-ops, no errores. Es la semántica de un conjunto, y le ahorra al agente LLM tener que llevar la cuenta.
+- **No existe fallo de batería ni de contactor** en todo el enum de FBW (`battery.rs` no tiene campo `Failure`). Los únicos componentes eléctricos fallables son generadores, TRs, static inverter y buses. Queda documentado en el módulo: el proxy más cercano a "pérdida de batería" es `elec.bus.dc_bat`. No se inventa un id que el vendor no puede honrar.
+
+**Hallazgo del test de integración** (`core-rs/tests/failure_injection.rs`): "inyectar y limpiar devuelve el sistema al estado previo" solo se sostiene para el **estado discreto** de la red (`*_IS_POWERED`, `*_POTENTIAL_NORMAL`). Las magnitudes continuas no vuelven, y es correcto que no vuelvan: `ELEC_BAT_1_CURRENT` refleja que la batería se descargó un poco mientras el TR estaba fallado. Exigir el snapshot entero sería exigir que el avión olvide que el fallo ocurrió.
+
+### D-014 — No hay FWC en el Rust: el catálogo ECAM es nuestro (issue #15)
+**Fecha**: 2026-07-17 (Fase 2, issue #15)
+Nota de diseño completa con la evidencia: `docs/fase2-ecam.md`.
+
+`CLAUDE.md` anticipaba que `read_ecam()` sería "mapear los warnings del FWC". **No hay FWC en el código vendorizado**: cero coincidencias de `flight_warning`, `FlightWarningComputer`, `master_caution` ni `master_warning` en todo el árbol (`fbw-a32nx`, `fbw-a380x`, `fbw-common`). El propio vendor lo reconoce (`a320_systems/src/surveillance.rs:73`: *"TODO: Comes from FWC"*). Además el ECAM en TypeScript **ni siquiera está vendorizado**: el submódulo está en sparse-checkout (`fbw-a32nx/src/wasm`, `fbw-a380x/src/wasm`, `fbw-common/src/wasm`), así que `fbw-a32nx/src/systems` no existe localmente. Era el riesgo que el propio issue #15 marcaba como abierto; se materializó.
+
+**Consecuencia arquitectónica**: `read_ecam()` es un **motor de reglas nuestro** (`core-rs/src/ecam.rs`) sobre variables que el Rust sí escribe, no un mapeo de un FWC inexistente. Portar el FWC es un subproyecto (y su lógica de inhibición por fase de vuelo es justo lo que no está), y el texto de los mensajes vive en una capa que ni compilamos.
+
+**Decisiones concretas**:
+- **`EcamSource` (`VendorFlag` / `Derived`) por regla.** Distingue lo que calcula FBW (la luz FAULT de un pulsador del overhead) de lo que concluimos nosotros (p. ej. "TR alimentado pero sin potencial normal"). **No es cosmético**: es la frontera entre el ground truth heredado y el inventado. La contribución de investigación es el entorno evaluable; si en la Fase 5 no se puede decir qué parte del ground truth es de FBW, no se puede decir qué mide el benchmark. Se registra por regla y aflora hasta la CLI (`[fbw]`/`[ours]`) y el binding.
+- **Gate de alimentación.** Sin FWC no hay inhibición, y el flag de AC ESS FEED es `!ac_ess_bus_is_powered` **sin más condiciones**: en cold & dark vale `true` sin ningún fallo (verificado empíricamente, y el propio test de FBW `when_ac_ess_bus_is_unpowered_ac_ess_feed_has_fault` lo afirma). Un mapeo naive daría una caution en un avión sano y violaría el criterio de #15. Las reglas solo se evalúan si la ECAM estaría viva (AC ESS o DC ESS alimentados); si no, lista vacía. No es un parche para pasar el test: en el avión real la ECAM no está alimentada en cold & dark. El criterio del issue y la fidelidad piden lo mismo.
+- **Solo lo alcanzable.** Seis reglas eléctricas. El RAT & EMER GEN FAULT queda **fuera y documentado**: su condición exige `!context.is_on_ground()` (`electrical/mod.rs:408`) y toda la Fase 2 es en tierra. Un test (`no_rule_depends_on_being_airborne`) lo recuerda. Tampoco hay BAT FAULT: las baterías nunca reciben `set_fault` en FBW; no está modelado y no se finge.
+- **Los TR no tienen luz de fault** (ni en el avión real ni en FBW): sus dos reglas son `Derived`, y su condición exige el bus AC de entrada vivo. Sin eso, un TR sin alimentar se reportaría como averiado — un TR sin AC no está roto, está apagado, y el mensaje falso taparía la causa real.
+- **`every_ecam_rule_reads_registered_lvars`** es el anti-drift crítico: si upstream renombrase un `OVHD_*_PB_HAS_FAULT`, la regla quedaría **muda para siempre** (`peek_by_name` → 0.0, el warning nunca salta) y ningún otro test lo notaría — todos verían "ECAM limpia", que es lo esperado sin fallos.
+
+**Nota sobre el seeding**: la exploración advirtió de que `ENG_GEN_{1,2}_PB_HAS_FAULT` también daría falso positivo en cold & dark porque esos pulsadores arrancan en ON en FBW (`new_on`). Eso vale para el test bed *seeded*; **nuestro runtime no siembra** (D-007), así que leen 0 = OFF y no dan fault. Verificado empíricamente. La trampa nos llega solo vía AC ESS FEED, que no depende de ningún pulsador.
+
 ## Hitos
 
 ### Fase 1 cerrada — 2026-07-15
 Criterio de éxito cumplido y automatizado: cold & dark → baterías ON → ext pwr con la red cobrando vida, como test de integración (`core-rs/tests/electrical_slice.rs`) y operable a mano en el REPL (`a320-cli`, con `watch`). Entregado en los PRs #29 (readme), #30/#34/#32/#33 (runtime + API, issues #6–#9), #36 (catálogo, #10), #37 (bindings PyO3, #11), #35 (test de integración, #13), #38 (CLI, #12) y #40 (fix del wedge del primer tick, #39, encontrado en la verificación final). Decisiones asociadas: D-007 a D-012. Pin del vendor intacto (`13bce4b`), cero parches al código de FBW. Siguiente: Fase 2 (failures + `read_ecam`, issues #14–#16).
+
+### Fase 2 cerrada — 2026-07-17
+Criterio de éxito cumplido y automatizado: **tirar un generador y ver aparecer su caution** (`core-rs/tests/generator_caution.rs`), operable a mano en el REPL (`fail elec.apu_gen.1` + `ecam`) y verificado en CI sobre la demo. El bucle que justifica el proyecto está cerrado: algo se rompe y el avión lo dice.
+
+Entregado en los PRs #47 (inyección de fallos, #14), #48 (`read_ecam`, #15) y #49 (demo del generador, #16). Decisiones asociadas: D-013 (ids estables de fallos) y D-014 (no hay FWC: el catálogo ECAM es nuestro). Pin del vendor intacto (`13bce4b`), cero parches al código de FBW.
+
+**El caso del demo es el APU GEN**, no un generador de motor: el arranque de motores es de Fase 4, así que `Generator(1)/(2)` no son ejercitables (sin motor girando su contactor está abierto de todos modos y el fault no distinguiría un fallo de un estado normal). El APU sí arranca en tierra —y sin arrastrar el sistema de fuel, porque el Rust de FBW no quema combustible: basta `UNLIMITED FUEL`—, y su fault es además el único flag eléctrico correctamente gateado por el estado real del sistema (`apu.is_available()`), así que no da falsos positivos. Satisface el criterio al pie de la letra: es un generador de verdad.
+
+**Hallazgo del escenario**: al caer el APU GEN (única fuente AC) la ECAM levanta **dos** cautions — `APU GEN FAULT` y, aguas abajo, `AC ESS BUS FAULT`. Ambas correctas, y es lo que hace el escenario realista: un agente tendrá que lidiar con la cascada, no con un mensaje aislado. La ECAM sigue legible porque las baterías mantienen vivo el DC ESS; por eso el gate de D-014 mira AC ESS **o** DC ESS. Si mirase solo el AC, este escenario —perder toda la red AC— se quedaría mudo justo cuando más importa.
+
+**Siguiente**: Fase 3 (servidor MCP, issue #17). La superficie que expone (`set`/`get`/`step`/fallos/`read_ecam`/descubrimiento) ya está completa y probada en los bindings; la Fase 3 es sentar a un LLM en la silla.
 
 ## Abiertas
 

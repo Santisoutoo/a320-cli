@@ -13,10 +13,9 @@
 //! - [`Sim::snapshot`] — volcado completo del estado.
 //! - [`Sim::list_variables`] — descubrimiento crudo (todo el registro).
 //! - [`Sim::list_controls`] — descubrimiento curado (catálogo de controles, #10).
-//!
-//! `read_ecam()` y la inyección/limpieza de fallos son de **Fase 2** (#14, #15):
-//! se les deja sitio (los errores y la fachada no cierran la puerta), pero no se
-//! stubbean aquí.
+//! - [`Sim::inject_failure`] / [`Sim::clear_failure`] / [`Sim::list_failures`] —
+//!   inyección de fallos (Fase 2, #14).
+//! - [`Sim::read_ecam`] — warnings/cautions activos (Fase 2, #15).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,6 +23,8 @@ use std::fmt;
 use systems::simulation::StartState;
 
 use crate::controls::{self, Control};
+use crate::ecam::{self, Warning};
+use crate::failures::{self, FailureDef};
 use crate::runtime::Runtime;
 
 /// Errores de la API, tipados y con mensaje útil: un REPL y un LLM necesitan
@@ -39,6 +40,9 @@ pub enum ApiError {
         value: f64,
         reason: String,
     },
+    /// Id de fallo que no está en el catálogo (issue #14).
+    /// Usa [`Sim::list_failures`] para descubrir los ids válidos.
+    UnknownFailure { id: String },
 }
 
 impl fmt::Display for ApiError {
@@ -53,6 +57,10 @@ impl fmt::Display for ApiError {
                 value,
                 reason,
             } => write!(f, "bad value {value} for control '{name}': {reason}"),
+            ApiError::UnknownFailure { id } => write!(
+                f,
+                "unknown failure '{id}' (not in the failure catalog; use list_failures() to discover valid ids)"
+            ),
         }
     }
 }
@@ -203,6 +211,65 @@ impl Sim {
     /// la CLI usa para autocompletar y el MCP para el esquema de `set_control`.
     pub fn list_controls(&self) -> Vec<Control> {
         controls::CATALOG.to_vec()
+    }
+
+    /// Catálogo curado de fallos inyectables (issue #14).
+    ///
+    /// Los ids son **nuestros y estables** (`elec.tr.1`), no la forma interna del
+    /// enum de FBW: es lo que permite escribirlos en un escenario del benchmark
+    /// y que sigan significando lo mismo tras un bump del pin del vendor.
+    pub fn list_failures(&self) -> Vec<FailureDef> {
+        failures::CATALOG.to_vec()
+    }
+
+    /// Activa un fallo por su id del catálogo.
+    ///
+    /// Surte efecto en el siguiente tick. Idempotente. Error
+    /// [`ApiError::UnknownFailure`] si el id no está catalogado (nunca un panic).
+    pub fn inject_failure(&mut self, id: &str) -> Result<(), ApiError> {
+        let def =
+            failures::by_id(id).ok_or_else(|| ApiError::UnknownFailure { id: id.to_owned() })?;
+        self.runtime.inject_failure(def.failure_type);
+        Ok(())
+    }
+
+    /// Desactiva un fallo por su id del catálogo.
+    ///
+    /// Idempotente: limpiar un fallo no activo es un no-op (no un error).
+    pub fn clear_failure(&mut self, id: &str) -> Result<(), ApiError> {
+        let def =
+            failures::by_id(id).ok_or_else(|| ApiError::UnknownFailure { id: id.to_owned() })?;
+        self.runtime.clear_failure(def.failure_type);
+        Ok(())
+    }
+
+    /// Ids de los fallos activos ahora mismo, ordenados.
+    ///
+    /// El runtime guarda `FailureType` (lo que el vendor entiende); esto lo
+    /// traduce de vuelta a ids nuestros, que es lo único que la API expone.
+    pub fn active_failures(&self) -> Vec<&'static str> {
+        let mut ids: Vec<&'static str> = self
+            .runtime
+            .active_failures()
+            .iter()
+            .filter_map(|ft| failures::id_of(*ft))
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Warnings/cautions activos en la ECAM, ordenados por severidad (issue #15).
+    ///
+    /// Es la observación principal del agente: lo que un piloto ve y desde lo que
+    /// razona. **No es un mapeo del FWC** — no hay FWC en el Rust de FBW; es un
+    /// motor de reglas nuestro sobre las variables que el avión sí escribe. Cada
+    /// warning declara en `source` si su lógica es de FBW o nuestra. Ver
+    /// [`crate::ecam`] y `docs/fase2-ecam.md`.
+    ///
+    /// Devuelve lista vacía si la ECAM no está alimentada (cold & dark), como en
+    /// el avión real: sin corriente no hay pantalla que leer.
+    pub fn read_ecam(&self) -> Vec<Warning> {
+        ecam::read(self.runtime.store())
     }
 
     /// Tiempo de simulación acumulado en segundos (monótono).
@@ -357,6 +424,151 @@ mod tests {
         }
         // El rechazo también aplica por LVAR crudo del catálogo.
         assert!(sim.set(BAT_1, 2.0).is_err());
+    }
+
+    #[test]
+    fn unknown_failure_id_is_a_typed_error() {
+        let mut sim = Sim::new();
+        let err = sim.inject_failure("elec.tr.99").unwrap_err();
+        match err {
+            ApiError::UnknownFailure { ref id } => assert_eq!(id, "elec.tr.99"),
+            ref other => panic!("esperaba UnknownFailure, fue {other:?}"),
+        }
+        // El mensaje debe decir cómo descubrir los ids válidos.
+        assert!(err.to_string().contains("list_failures"));
+        // Y clear_failure se comporta igual (no panic).
+        assert!(matches!(
+            sim.clear_failure("nope").unwrap_err(),
+            ApiError::UnknownFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn list_failures_exposes_the_curated_catalog() {
+        let sim = Sim::new();
+        let fs = sim.list_failures();
+        assert!(!fs.is_empty());
+        assert!(fs.iter().any(|f| f.id == "elec.tr.1"));
+        // Todos los de Fase 2 son del grupo eléctrico.
+        assert!(fs
+            .iter()
+            .all(|f| f.group == crate::failures::FailureGroup::Elec));
+    }
+
+    #[test]
+    fn active_failures_tracks_injection_and_clearing() {
+        let mut sim = Sim::new();
+        assert!(sim.active_failures().is_empty(), "arranca sin fallos");
+
+        sim.inject_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.tr.1"]);
+
+        // Idempotente: inyectar dos veces no duplica.
+        sim.inject_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.tr.1"]);
+
+        sim.inject_failure("elec.gen.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.gen.1", "elec.tr.1"]);
+
+        sim.clear_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.gen.1"]);
+
+        // Idempotente también al limpiar algo no activo.
+        sim.clear_failure("elec.tr.1").unwrap();
+        assert_eq!(sim.active_failures(), vec!["elec.gen.1"]);
+    }
+
+    /// Lleva el avión a red AC completa con ext pwr (helper de los tests ECAM).
+    fn powered_network() -> Sim {
+        let mut sim = Sim::new();
+        sim.set(BAT_1, 1.0).unwrap();
+        sim.set(BAT_2, 1.0).unwrap();
+        sim.set("bus_tie", 1.0).unwrap();
+        sim.set("ext_pwr_avail", 1.0).unwrap();
+        sim.set("ext_pwr", 1.0).unwrap();
+        sim.run(3.0, 5.0);
+        sim
+    }
+
+    #[test]
+    fn ecam_is_clean_in_settled_cold_and_dark() {
+        // Criterio literal del issue #15. Sin el gate de alimentación esto
+        // fallaría: OVHD_ELEC_AC_ESS_FEED_PB_HAS_FAULT vale 1 en cold & dark
+        // (su condición es `!ac_ess_bus_is_powered`, sin más gating, porque la
+        // inhibición vive en el FWC que FBW no porta). Ver docs/fase2-ecam.md.
+        let mut sim = Sim::new();
+        sim.run(3.0, 5.0);
+        assert!(
+            sim.read_ecam().is_empty(),
+            "cold & dark: ECAM debería estar limpia, fue {:?}",
+            sim.read_ecam()
+        );
+    }
+
+    #[test]
+    fn ecam_is_clean_with_a_healthy_powered_network() {
+        // El otro lado del gate: con la ECAM viva y el avión sano, tampoco debe
+        // inventarse warnings. Es el test que caza el falso positivo si alguien
+        // quita una condición de una regla.
+        let sim = powered_network();
+        assert!(
+            sim.read_ecam().is_empty(),
+            "red sana: ECAM debería estar limpia, fue {:?}",
+            sim.read_ecam()
+        );
+        // Y la ECAM está realmente alimentada (si no, el test pasaría por el
+        // gate y no probaría nada).
+        let s = sim.get(&["ELEC_AC_ESS_BUS_IS_POWERED"]).unwrap();
+        assert_eq!(
+            s["ELEC_AC_ESS_BUS_IS_POWERED"], 1.0,
+            "la ECAM debe estar viva"
+        );
+    }
+
+    #[test]
+    fn tr_1_failure_raises_its_caution_and_clearing_retires_it() {
+        let mut sim = powered_network();
+
+        sim.inject_failure("elec.tr.1").unwrap();
+        sim.run(2.0, 5.0);
+        let ecam = sim.read_ecam();
+        let w = ecam
+            .iter()
+            .find(|w| w.id == "elec.tr.1.fault")
+            .unwrap_or_else(|| panic!("se esperaba la caution del TR 1, ECAM: {ecam:?}"));
+        assert_eq!(w.message, "ELEC TR 1 FAULT");
+        assert_eq!(w.severity, crate::ecam::Severity::Caution);
+        assert_eq!(w.source, crate::ecam::EcamSource::Derived);
+
+        sim.clear_failure("elec.tr.1").unwrap();
+        sim.run(2.0, 5.0);
+        assert!(
+            sim.read_ecam().is_empty(),
+            "fallo limpiado: la caution debería retirarse, ECAM: {:?}",
+            sim.read_ecam()
+        );
+    }
+
+    /// Anti-drift del issue #15, hermano de
+    /// `every_catalog_lvar_is_registered_after_a_tick`: si upstream renombrase un
+    /// `OVHD_*_PB_HAS_FAULT`, la regla se quedaría **muda para siempre** —
+    /// `peek_by_name` devolvería 0.0 y el warning no saltaría nunca. Ningún otro
+    /// test lo notaría (todos verían "ECAM limpia", que es lo esperado sin
+    /// fallos). Este es el test que más protege el proyecto de un bump del pin.
+    #[test]
+    fn every_ecam_rule_reads_registered_lvars() {
+        let mut sim = Sim::new();
+        sim.step(1000);
+        let vars = sim.list_variables();
+        for rule in crate::ecam::CATALOG {
+            for lvar in rule.read_lvars() {
+                assert!(
+                    vars.iter().any(|n| n == lvar),
+                    "la regla '{}' lee '{lvar}', que no está en el registro tras un tick",
+                    rule.id
+                );
+            }
+        }
     }
 
     #[test]

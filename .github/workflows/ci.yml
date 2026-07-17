@@ -35,9 +35,22 @@ jobs:
         with:
           workspaces: core-rs
 
-      # Compilacion NATIVA siempre. Si algun dia el build arrastra msfs-rs,
-      # systems_wasm o wasm-bindgen, es un bug de decoupling (ver D-005 en
-      # docs/decisiones.md): se arregla, no se instala un toolchain wasm.
+      # Guardia ejecutable de D-005: la asuncion estructural del proyecto es que
+      # el grafo nativo NO arrastra msfs-rs, systems_wasm, a320_systems_wasm ni
+      # wasm-bindgen. Un bump del pin del vendor es exactamente lo que podria
+      # romperla, y sin esto el build empezaria a fallar senalando otra cosa.
+      - name: Guardia del decoupling (D-005)
+        working-directory: core-rs
+        shell: bash
+        run: |
+          cargo tree --prefix none -e normal,build | tee tree.out >/dev/null
+          if grep -E '^(msfs|systems_wasm|a320_systems_wasm|wasm-bindgen) ' tree.out; then
+            echo "::error::el grafo de dependencias NATIVO arrastra crates de MSFS/WASM: es un bug de decoupling (ver D-005 en docs/decisiones.md), no un toolchain que falte"
+            exit 1
+          fi
+          echo "grafo nativo limpio: sin msfs-rs / systems_wasm / a320_systems_wasm / wasm-bindgen"
+
+      # Compilacion NATIVA siempre (la guardia de arriba lo hace ejecutable).
       - name: cargo check
         working-directory: core-rs
         run: cargo check --all-targets
@@ -59,6 +72,27 @@ jobs:
           cargo run | tee demo.out
           grep -q '\[ext pwr ON\] *AC_1=ON' demo.out \
             || { echo "::error::el AC_1 bus no se alimento con ext pwr ON"; exit 1; }
+          # Fase 2 (#14): el fallo del TR 1 debe RECONFIGURAR la red, no apagarla.
+          # Se exige el par completo (TR_1 caido Y DC_1 vivo): si solo se mirase
+          # el TR, una inyeccion que apagara media red pasaria por buena.
+          grep -q '\[fail TR 1\] *AC_1=ON *DC_1=ON .*TR_1_OK=off' demo.out \
+            || { echo "::error::el fallo del TR 1 no reconfiguro la red (se esperaba TR_1_OK=off con DC_1=ON via bus tie)"; exit 1; }
+          grep -q '\[unfail TR 1\] .*TR_1_OK=ON' demo.out \
+            || { echo "::error::limpiar el fallo del TR 1 no restauro su potencial normal"; exit 1; }
+          # Fase 2 (#15): el bucle entero -- el fallo levanta su caution en la
+          # ECAM, y limpiarlo la retira. Que la deteccion corra en CI es lo que
+          # separa "el avion tiene fallos" de "el avion te dice que fallo".
+          grep -q 'ECAM: CAUTION ELEC TR 1 FAULT' demo.out \
+            || { echo "::error::el fallo del TR 1 no levanto su caution en la ECAM"; exit 1; }
+          grep -q 'ECAM: clear' demo.out \
+            || { echo "::error::la ECAM no volvio a estar limpia tras limpiar el fallo"; exit 1; }
+          # Fase 2 (#16): el criterio de exito de la fase -- tirar un GENERADOR y
+          # ver su caution. Cubre ademas el arranque del APU headless, que es lo
+          # unico que hace este caso alcanzable sin motores (Fase 4).
+          grep -q '\[fail APU GEN\]' demo.out \
+            || { echo "::error::la demo del APU GEN no llego a ejecutarse (¿no arranco el APU?)"; exit 1; }
+          grep -q 'ECAM: CAUTION APU GEN FAULT' demo.out \
+            || { echo "::error::el fallo del APU GEN no levanto su caution"; exit 1; }
 
   lint:
     name: lint
@@ -85,3 +119,20 @@ jobs:
       - name: clippy
         working-directory: core-rs
         run: cargo clippy --all-targets -- -D warnings
+
+  # Gate agregado: el UNICO status check que exige la proteccion de main.
+  # Anadir/renombrar jobs solo requiere tocar `needs`, no la proteccion.
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    needs: [core, lint]
+    if: always()
+    steps:
+      - name: Comprobar que todos los jobs pasaron
+        run: |
+          echo "core: ${{ needs.core.result }}"
+          echo "lint: ${{ needs.lint.result }}"
+          if [ "${{ needs.core.result }}" != "success" ] || [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "::error::algun job del CI no paso"
+            exit 1
+          fi
