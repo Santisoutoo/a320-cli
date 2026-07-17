@@ -212,6 +212,7 @@ place, so you see contactors sequence — not just a before and an after.
 | **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — success criterion met (see [Demo](#demo)); zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack settled ([D-004](docs/decisiones.md)) |
 | **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **Done** — success criterion automated as an integration test (`core-rs/tests/electrical_slice.rs`); curated control catalog, PyO3 bindings (`a320_sim`) and REPL with live `watch` shipped; design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
 | **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | **Next** |
+| **T — Terminal UI** | Textual cockpit over the same core: interactive ELEC overhead panel, SD-style ELEC synoptic, E/WD warnings, embedded command line ([D-014](docs/decisiones.md)) | Parallel track — PoC on `feat/tui-poc`; E/WD consumes `read_ecam` once Phase 2 closes; does not gate Phase 3 |
 | **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | Planned |
 | **4 — More systems** | Hydraulics, APU, fuel, engine start; richer world boundary (N2 input) | Planned |
 | **5 — Benchmark (research)** | Scenario suite with QRH ground truth, trajectory-level compliance scoring, baselines + ablations | Planned |
@@ -227,6 +228,7 @@ core-rs/        Rust core: harness + API + vendored FBW (pinned git submodule)
   vendor/       flybywiresim/aircraft @ 13bce4b (GPLv3)
 bindings/       PyO3 bindings                 (Phase 1)
 cli/            Python REPL                   (Phase 1)
+tui/            Textual terminal cockpit      (Phase T)
 mcp/            MCP server                    (Phase 3)
 scenarios/      Failure scenarios + QRH ground truth (Phase 5)
 docs/           Design notes + decision log

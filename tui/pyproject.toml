@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a320-tui"
+version = "0.1.0"
+description = "Textual terminal cockpit over the headless A320 systems core"
+readme = "README.md"
+requires-python = ">=3.10"
+# GPLv3: the TUI drives the a320_sim extension, which links the vendored FBW
+# crates and inherits their license.
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Santiago Souto" }]
+keywords = ["a320", "flybywire", "simulation", "tui", "textual"]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    # The Rust core exposed to Python (module name: a320_sim). Not on PyPI:
+    # install it first with `pip install -e bindings/`.
+    "a320-sim",
+    # The REPL package: the TUI's embedded command line reuses its grammar
+    # (A320Repl.onecmd) instead of duplicating a parser.
+    "a320-cli",
+    # Minor-range pin: Textual's API moves fast; bumping is a conscious PR.
+    "textual>=8.2,<8.3",
+]
+
+[project.scripts]
+a320-tui = "a320_tui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/Santisoutoo/a320-cli"
+Repository = "https://github.com/Santisoutoo/a320-cli"
+
+[tool.setuptools]
+packages = ["a320_tui", "a320_tui.widgets"]
+
+[tool.setuptools.package-data]
+a320_tui = ["styles/*.tcss"]

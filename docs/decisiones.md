@@ -117,6 +117,19 @@ La única vía real hacia `Closed` en tierra es `Open -> Off -> Closed::from_off
 
 Regresión cubierta por `writes_before_the_first_tick_do_not_wedge_the_battery_contactor` (`core-rs/src/runtime.rs`): el caso B del issue (set antes de todo tick) debe comportarse como el caso A (tick primero).
 
+### D-014 — Frontend TUI: Python + Textual, paquete `tui/` separado (Fase T)
+**Fecha**: 2026-07-17 (Fase T, PoC en `feat/tui-poc`)
+*(D-013 está reservada: la reclama la rama en vuelo `feat/14-failure-injection` — catálogo de fallos.)*
+
+La TUI (cockpit en terminal: overhead ELEC interactivo, synoptic estilo SD, E/WD, command line embebida) es un **tercer frontend** sobre la misma API, no una evolución del REPL:
+
+- **Textual** sobre las alternativas: Rich solo no da widgets interactivos ni event loop; `prompt_toolkit` ya se descartó para UI (D-011); `ratatui` duplicaría la capa frontend en Rust contra D-004 (Python para frontends). Pin de rango menor (`textual>=8.2,<8.3`): su API se mueve rápido y subir versión debe ser un PR consciente.
+- **No reabre D-011**: aquella decidió el REPL (stdlib), y sigue vigente — de hecho la TUI *reutiliza* el REPL: su command line ejecuta `A320Repl.onecmd()` sobre un buffer (una sola gramática que mantener, mismo manejo de errores). `cli/` sigue stdlib-only; por eso la TUI vive en un paquete top-level propio `tui/` con sus dependencias.
+- **`Sim` es unsendable** (PyO3 + `Rc`/`RefCell` de FBW): todo acceso a la sim pasa por un `SimBridge` que vive en el hilo del event loop; el tick es un `set_interval` de Textual (main thread) y está **prohibido** `@work(thread=True)` para nada que toque el bridge (assert de thread-id en cada método).
+- **`get` selectivo por manifest** (~30 vars por tick a 5 Hz), nunca `snapshot()` (construye un dict de cientos de vars por llamada). El manifest es data-driven desde `list_controls()` + overlays de display: un control nuevo de Fase 4 aparece en el panel sin tocar la TUI.
+- **`a320-cli` lanza la TUI cuando está instalada** (`a320_cli/launcher.py`, import opcional → sigue stdlib-only); `a320-cli --repl` conserva el REPL clásico.
+- Gotcha registrado: `OVHD_ELEC_EXT_PWR_PB_IS_AVAILABLE` nunca sube en el build headless; la señal de AVAIL es `ELEC_EXT_PWR_POTENTIAL_NORMAL`.
+
 ## Hitos
 
 ### Fase 1 cerrada — 2026-07-15

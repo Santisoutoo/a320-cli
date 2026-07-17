@@ -1,0 +1,22 @@
+#main {
+    height: 1fr;
+}
+
+#right {
+    width: 1fr;
+}
+
+#cmdline {
+    dock: bottom;
+    height: 9;
+}
+
+#cmdlog {
+    height: 1fr;
+    border: round $primary-darken-2;
+    padding: 0 1;
+}
+
+#cmdinput {
+    dock: bottom;
+}

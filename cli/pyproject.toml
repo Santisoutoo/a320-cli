@@ -29,7 +29,9 @@ dependencies = [
 ]
 
 [project.scripts]
-a320-cli = "a320_cli.repl:main"
+# Launches the TUI when the optional a320-tui package is installed (Phase T);
+# falls back to the REPL otherwise. `a320-cli --repl` always gets the REPL.
+a320-cli = "a320_cli.launcher:main"
 
 [project.urls]
 Homepage = "https://github.com/Santisoutoo/a320-cli"
