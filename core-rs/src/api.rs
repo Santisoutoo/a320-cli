@@ -510,7 +510,7 @@ mod tests {
         // El otro lado del gate: con la ECAM viva y el avión sano, tampoco debe
         // inventarse warnings. Es el test que caza el falso positivo si alguien
         // quita una condición de una regla.
-        let mut sim = powered_network();
+        let sim = powered_network();
         assert!(
             sim.read_ecam().is_empty(),
             "red sana: ECAM debería estar limpia, fue {:?}",
