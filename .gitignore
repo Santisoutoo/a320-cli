@@ -232,4 +232,4 @@ __marimo__/
 .claude/settings.local.json
 
 # venv de verificación manual de bindings/CLI (Fase 2)
-.venv-fase2/
+.venv-fase*/
