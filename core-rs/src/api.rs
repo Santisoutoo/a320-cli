@@ -15,9 +15,7 @@
 //! - [`Sim::list_controls`] — descubrimiento curado (catálogo de controles, #10).
 //! - [`Sim::inject_failure`] / [`Sim::clear_failure`] / [`Sim::list_failures`] —
 //!   inyección de fallos (Fase 2, #14).
-//!
-//! `read_ecam()` es de **Fase 2** también (#15): se le deja sitio, pero no se
-//! stubbea aquí.
+//! - [`Sim::read_ecam`] — warnings/cautions activos (Fase 2, #15).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,6 +23,7 @@ use std::fmt;
 use systems::simulation::StartState;
 
 use crate::controls::{self, Control};
+use crate::ecam::{self, Warning};
 use crate::failures::{self, FailureDef};
 use crate::runtime::Runtime;
 
@@ -259,6 +258,20 @@ impl Sim {
         ids
     }
 
+    /// Warnings/cautions activos en la ECAM, ordenados por severidad (issue #15).
+    ///
+    /// Es la observación principal del agente: lo que un piloto ve y desde lo que
+    /// razona. **No es un mapeo del FWC** — no hay FWC en el Rust de FBW; es un
+    /// motor de reglas nuestro sobre las variables que el avión sí escribe. Cada
+    /// warning declara en `source` si su lógica es de FBW o nuestra. Ver
+    /// [`crate::ecam`] y `docs/fase2-ecam.md`.
+    ///
+    /// Devuelve lista vacía si la ECAM no está alimentada (cold & dark), como en
+    /// el avión real: sin corriente no hay pantalla que leer.
+    pub fn read_ecam(&self) -> Vec<Warning> {
+        ecam::read(self.runtime.store())
+    }
+
     /// Tiempo de simulación acumulado en segundos (monótono).
     pub fn sim_time(&self) -> f64 {
         self.runtime.sim_time()
@@ -463,6 +476,99 @@ mod tests {
         // Idempotente también al limpiar algo no activo.
         sim.clear_failure("elec.tr.1").unwrap();
         assert_eq!(sim.active_failures(), vec!["elec.gen.1"]);
+    }
+
+    /// Lleva el avión a red AC completa con ext pwr (helper de los tests ECAM).
+    fn powered_network() -> Sim {
+        let mut sim = Sim::new();
+        sim.set(BAT_1, 1.0).unwrap();
+        sim.set(BAT_2, 1.0).unwrap();
+        sim.set("bus_tie", 1.0).unwrap();
+        sim.set("ext_pwr_avail", 1.0).unwrap();
+        sim.set("ext_pwr", 1.0).unwrap();
+        sim.run(3.0, 5.0);
+        sim
+    }
+
+    #[test]
+    fn ecam_is_clean_in_settled_cold_and_dark() {
+        // Criterio literal del issue #15. Sin el gate de alimentación esto
+        // fallaría: OVHD_ELEC_AC_ESS_FEED_PB_HAS_FAULT vale 1 en cold & dark
+        // (su condición es `!ac_ess_bus_is_powered`, sin más gating, porque la
+        // inhibición vive en el FWC que FBW no porta). Ver docs/fase2-ecam.md.
+        let mut sim = Sim::new();
+        sim.run(3.0, 5.0);
+        assert!(
+            sim.read_ecam().is_empty(),
+            "cold & dark: ECAM debería estar limpia, fue {:?}",
+            sim.read_ecam()
+        );
+    }
+
+    #[test]
+    fn ecam_is_clean_with_a_healthy_powered_network() {
+        // El otro lado del gate: con la ECAM viva y el avión sano, tampoco debe
+        // inventarse warnings. Es el test que caza el falso positivo si alguien
+        // quita una condición de una regla.
+        let mut sim = powered_network();
+        assert!(
+            sim.read_ecam().is_empty(),
+            "red sana: ECAM debería estar limpia, fue {:?}",
+            sim.read_ecam()
+        );
+        // Y la ECAM está realmente alimentada (si no, el test pasaría por el
+        // gate y no probaría nada).
+        let s = sim.get(&["ELEC_AC_ESS_BUS_IS_POWERED"]).unwrap();
+        assert_eq!(
+            s["ELEC_AC_ESS_BUS_IS_POWERED"], 1.0,
+            "la ECAM debe estar viva"
+        );
+    }
+
+    #[test]
+    fn tr_1_failure_raises_its_caution_and_clearing_retires_it() {
+        let mut sim = powered_network();
+
+        sim.inject_failure("elec.tr.1").unwrap();
+        sim.run(2.0, 5.0);
+        let ecam = sim.read_ecam();
+        let w = ecam
+            .iter()
+            .find(|w| w.id == "elec.tr.1.fault")
+            .unwrap_or_else(|| panic!("se esperaba la caution del TR 1, ECAM: {ecam:?}"));
+        assert_eq!(w.message, "ELEC TR 1 FAULT");
+        assert_eq!(w.severity, crate::ecam::Severity::Caution);
+        assert_eq!(w.source, crate::ecam::EcamSource::Derived);
+
+        sim.clear_failure("elec.tr.1").unwrap();
+        sim.run(2.0, 5.0);
+        assert!(
+            sim.read_ecam().is_empty(),
+            "fallo limpiado: la caution debería retirarse, ECAM: {:?}",
+            sim.read_ecam()
+        );
+    }
+
+    /// Anti-drift del issue #15, hermano de
+    /// `every_catalog_lvar_is_registered_after_a_tick`: si upstream renombrase un
+    /// `OVHD_*_PB_HAS_FAULT`, la regla se quedaría **muda para siempre** —
+    /// `peek_by_name` devolvería 0.0 y el warning no saltaría nunca. Ningún otro
+    /// test lo notaría (todos verían "ECAM limpia", que es lo esperado sin
+    /// fallos). Este es el test que más protege el proyecto de un bump del pin.
+    #[test]
+    fn every_ecam_rule_reads_registered_lvars() {
+        let mut sim = Sim::new();
+        sim.step(1000);
+        let vars = sim.list_variables();
+        for rule in crate::ecam::CATALOG {
+            for lvar in rule.read_lvars() {
+                assert!(
+                    vars.iter().any(|n| n == lvar),
+                    "la regla '{}' lee '{lvar}', que no está en el registro tras un tick",
+                    rule.id
+                );
+            }
+        }
     }
 
     #[test]

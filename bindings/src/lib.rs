@@ -7,9 +7,8 @@
 //! útil; ningún panic cruza el FFI.
 //!
 //! Esta capa no tiene lógica de simulación: es un envoltorio 1:1 del contrato de
-//! `api::Sim`. `list_controls()` (issue #10/#12) y la inyección de fallos (#14)
-//! ya están expuestos; `read_ecam()` (#15) se añadirá cuando exista en el core;
-//! no se stubbea.
+//! `api::Sim`. `list_controls()` (issue #10/#12), la inyección de fallos (#14) y
+//! `read_ecam()` (#15) están expuestos; la superficie es 1:1 con el core.
 
 use std::collections::BTreeMap;
 
@@ -205,6 +204,34 @@ impl PySim {
             .active_failures()
             .into_iter()
             .map(str::to_owned)
+            .collect()
+    }
+
+    /// Warnings/cautions activos en la ECAM, ordenados por severidad (issue #15).
+    ///
+    /// Lista de dicts, todo `str` para cruzar el FFI: `id`, `message` (el texto
+    /// tal como lo mostraría la ECAM), `severity` (`warning`/`caution`/
+    /// `advisory`), `system` y `source`.
+    ///
+    /// `source` distingue si la lógica del warning la calcula FBW
+    /// (`vendor_flag`) o es una regla nuestra (`derived`): no hay FWC en el Rust
+    /// de FBW, así que el catálogo es nuestro y conviene que el consumidor sepa
+    /// de dónde viene cada mensaje. Ver `docs/fase2-ecam.md`.
+    ///
+    /// Devuelve `[]` si la ECAM no está alimentada (cold & dark).
+    fn read_ecam(&self) -> Vec<BTreeMap<String, String>> {
+        self.inner
+            .read_ecam()
+            .into_iter()
+            .map(|w| {
+                let mut d = BTreeMap::new();
+                d.insert("id".to_owned(), w.id.to_owned());
+                d.insert("message".to_owned(), w.message.to_owned());
+                d.insert("severity".to_owned(), w.severity.as_str().to_owned());
+                d.insert("system".to_owned(), w.system.as_str().to_owned());
+                d.insert("source".to_owned(), w.source.as_str().to_owned());
+                d
+            })
             .collect()
     }
 

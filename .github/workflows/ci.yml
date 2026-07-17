@@ -79,6 +79,13 @@ jobs:
             || { echo "::error::el fallo del TR 1 no reconfiguro la red (se esperaba TR_1_OK=off con DC_1=ON via bus tie)"; exit 1; }
           grep -q '\[unfail TR 1\] .*TR_1_OK=ON' demo.out \
             || { echo "::error::limpiar el fallo del TR 1 no restauro su potencial normal"; exit 1; }
+          # Fase 2 (#15): el bucle entero -- el fallo levanta su caution en la
+          # ECAM, y limpiarlo la retira. Que la deteccion corra en CI es lo que
+          # separa "el avion tiene fallos" de "el avion te dice que fallo".
+          grep -q 'ECAM: CAUTION ELEC TR 1 FAULT' demo.out \
+            || { echo "::error::el fallo del TR 1 no levanto su caution en la ECAM"; exit 1; }
+          grep -q 'ECAM: clear' demo.out \
+            || { echo "::error::la ECAM no volvio a estar limpia tras limpiar el fallo"; exit 1; }
 
   lint:
     name: lint
