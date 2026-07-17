@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "a320": {
+      "command": "a320-mcp",
+      "args": ["--start", "apu-running"]
+    }
+  }
+}

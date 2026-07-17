@@ -25,8 +25,16 @@ a320-mcp                        # cold & dark (default)
 a320-mcp --start apu-running    # APU started and feeding the AC network
 ```
 
-The server speaks **stdio**, so you don't run it by hand — a client launches it.
-Point one at it with:
+The server speaks **stdio**, so you don't normally run it by hand — a client
+launches it and talks over the pipe.
+
+`--start apu-running` takes ~60 s of *simulated* time at boot (a few seconds of
+wall clock) to spin the APU up before serving. The scenario is the harness's
+job, not the agent's.
+
+## Point a client at it
+
+The repo ships a [`.mcp.json`](../.mcp.json) that registers this server:
 
 ```json
 {
@@ -39,9 +47,19 @@ Point one at it with:
 }
 ```
 
-`--start apu-running` takes ~60 s of *simulated* time at boot (a few seconds of
-wall clock) to spin the APU up before serving. The scenario is the harness's
-job, not the agent's.
+The client spawns `a320-mcp`, so **it has to be on the PATH of the process that
+launches the client** — activate the virtualenv you installed it into before
+starting the client, or point `command` at the executable directly
+(`.venv/Scripts/a320-mcp.exe` on Windows, `.venv/bin/a320-mcp` elsewhere).
+
+MCP servers are read at client startup, so a client that was already running
+won't see it until you restart it.
+
+Then hand it the scenario:
+
+> The APU generator just failed. Deal with it.
+
+The agent has the ECAM and the switches — and nothing that tells it what broke.
 
 ## Tools
 
