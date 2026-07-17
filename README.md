@@ -211,8 +211,8 @@ place, so you see contactors sequence — not just a before and an after.
 |---|---|---|
 | **0 — Feasibility spike** | Compile FBW's `systems` + `a320_systems` natively, instantiate the A320, tick it, read electrical vars, inject a failure | **Done** — success criterion met (see [Demo](#demo)); zero patches to vendored code needed; 102 upstream electrical tests pass natively; stack settled ([D-004](docs/decisiones.md)) |
 | **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **Done** — success criterion automated as an integration test (`core-rs/tests/electrical_slice.rs`); curated control catalog, PyO3 bindings (`a320_sim`) and REPL with live `watch` shipped; design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
-| **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` mapping FWC warnings | **Next** |
-| **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | Planned |
+| **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` | **Done** — success criterion automated (`core-rs/tests/generator_caution.rs`): the APU generator fails and its caution appears. Stable failure ids (`elec.tr.1`) decoupled from FBW's enum ([D-013](docs/decisiones.md)). **There is no FWC in the vendored Rust**, so the ECAM catalog is ours — a rule engine over what FBW actually writes, with each rule declaring whether its logic is FBW's or ours ([D-014](docs/decisiones.md), [docs/fase2-ecam.md](docs/fase2-ecam.md)) |
+| **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | **Next** |
 | **4 — More systems** | Hydraulics, APU, fuel, engine start; richer world boundary (N2 input) | Planned |
 | **5 — Benchmark (research)** | Scenario suite with QRH ground truth, trajectory-level compliance scoring, baselines + ablations | Planned |
 

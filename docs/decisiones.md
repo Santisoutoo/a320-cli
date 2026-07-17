@@ -157,6 +157,17 @@ Nota de diseño completa con la evidencia: `docs/fase2-ecam.md`.
 ### Fase 1 cerrada — 2026-07-15
 Criterio de éxito cumplido y automatizado: cold & dark → baterías ON → ext pwr con la red cobrando vida, como test de integración (`core-rs/tests/electrical_slice.rs`) y operable a mano en el REPL (`a320-cli`, con `watch`). Entregado en los PRs #29 (readme), #30/#34/#32/#33 (runtime + API, issues #6–#9), #36 (catálogo, #10), #37 (bindings PyO3, #11), #35 (test de integración, #13), #38 (CLI, #12) y #40 (fix del wedge del primer tick, #39, encontrado en la verificación final). Decisiones asociadas: D-007 a D-012. Pin del vendor intacto (`13bce4b`), cero parches al código de FBW. Siguiente: Fase 2 (failures + `read_ecam`, issues #14–#16).
 
+### Fase 2 cerrada — 2026-07-17
+Criterio de éxito cumplido y automatizado: **tirar un generador y ver aparecer su caution** (`core-rs/tests/generator_caution.rs`), operable a mano en el REPL (`fail elec.apu_gen.1` + `ecam`) y verificado en CI sobre la demo. El bucle que justifica el proyecto está cerrado: algo se rompe y el avión lo dice.
+
+Entregado en los PRs #47 (inyección de fallos, #14), #48 (`read_ecam`, #15) y #49 (demo del generador, #16). Decisiones asociadas: D-013 (ids estables de fallos) y D-014 (no hay FWC: el catálogo ECAM es nuestro). Pin del vendor intacto (`13bce4b`), cero parches al código de FBW.
+
+**El caso del demo es el APU GEN**, no un generador de motor: el arranque de motores es de Fase 4, así que `Generator(1)/(2)` no son ejercitables (sin motor girando su contactor está abierto de todos modos y el fault no distinguiría un fallo de un estado normal). El APU sí arranca en tierra —y sin arrastrar el sistema de fuel, porque el Rust de FBW no quema combustible: basta `UNLIMITED FUEL`—, y su fault es además el único flag eléctrico correctamente gateado por el estado real del sistema (`apu.is_available()`), así que no da falsos positivos. Satisface el criterio al pie de la letra: es un generador de verdad.
+
+**Hallazgo del escenario**: al caer el APU GEN (única fuente AC) la ECAM levanta **dos** cautions — `APU GEN FAULT` y, aguas abajo, `AC ESS BUS FAULT`. Ambas correctas, y es lo que hace el escenario realista: un agente tendrá que lidiar con la cascada, no con un mensaje aislado. La ECAM sigue legible porque las baterías mantienen vivo el DC ESS; por eso el gate de D-014 mira AC ESS **o** DC ESS. Si mirase solo el AC, este escenario —perder toda la red AC— se quedaría mudo justo cuando más importa.
+
+**Siguiente**: Fase 3 (servidor MCP, issue #17). La superficie que expone (`set`/`get`/`step`/fallos/`read_ecam`/descubrimiento) ya está completa y probada en los bindings; la Fase 3 es sentar a un LLM en la silla.
+
 ## Abiertas
 
 *(ninguna)*
