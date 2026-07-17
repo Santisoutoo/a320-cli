@@ -117,6 +117,24 @@ La única vía real hacia `Closed` en tierra es `Open -> Off -> Closed::from_off
 
 Regresión cubierta por `writes_before_the_first_tick_do_not_wedge_the_battery_contactor` (`core-rs/src/runtime.rs`): el caso B del issue (set antes de todo tick) debe comportarse como el caso A (tick primero).
 
+### D-013 — Catálogo de fallos: ids estables propios sobre `FailureType` (issue #14)
+**Fecha**: 2026-07-17 (Fase 2, issue #14)
+La inyección de fallos **no necesita parchear el vendor ni pasar por MSFS**. `Simulation::update_active_failures(FxHashSet<FailureType>)` es público (`fbw-common/.../systems/src/simulation/mod.rs:468`) y es el mismo mecanismo que usa el `SimulationTestBed` de FBW (`test.rs:329-339`). El canal de LVAR/CommBus (`FBW_FAILURE_UPDATE`) que trae `systems_wasm` es un detalle de la capa MSFS y queda fuera de nuestro grafo (D-005 intacto).
+
+**El contrato del vendor es declarativo, no un toggle**: cada llamada reemplaza el conjunto activo entero (`Failure::receive_failure` hace `active_failures.contains(&self.failure_type)`). Por eso el dueño del `FxHashSet<FailureType>` es el `Runtime`, y lo reenvía **en cada tick** (`runtime.rs`, dentro de `tick`, junto a `environment.write_all`). Reenviarlo por tick —y no solo al mutar el set— vuelve irrelevante el orden inyectar-antes-de-ticar, que es exactamente la clase de trampa que costó el issue #39 con las baterías. A diferencia de D-012, aquí no hay riesgo en el tick de init: los fallos no viven en el store y el set arranca vacío, que es el estado correcto.
+
+**Los ids son nuestros y a mano** (`core-rs/src/failures.rs`, `CATALOG`), no la forma del enum de FBW. `FailureType` deriva solo `Clone, Copy, PartialEq, Eq, Hash`: **no `Debug`, no `Serialize`, sin id numérico**. No hay nada que exponer directamente a Python ni al MCP, y su forma cambia con el pin. Un id estable (`elec.tr.1`) se puede escribir en un fichero de escenario de Fase 5 y sigue significando lo mismo tras un bump; el mapeo versionado convierte ese bump en un diff visible (o en un fallo de compilación si una variante desaparece) en vez de una renumeración silenciosa.
+
+**Decisiones concretas**:
+- **Alcance ATA24 (eléctrico), 20 entradas.** Es el único sistema que la Fase 1 sabe observar. Catalogar ahora los ~50 fallos restantes (aire, hidráulico, tren, RA...) sería catalogar ids que ningún test puede ejercitar: un mapeo equivocado no lo notaría nadie. Se amplía por fase.
+- **Campo `ata` copiado de FBW.** La tabla `(u32, FailureType)` de `a320_systems_wasm/src/lib.rs:101-163` es la numeración de FBW; se copia como metadato para poder cruzar cualquier id nuestro con upstream. Es un **dato copiado, no un enlace**: `a320_systems_wasm` no entra en el build nativo.
+- **`Debug` de `FailureDef` a mano**, con `finish_non_exhaustive()`: `FailureType` no es formateable. No se pierde nada — lo legible es nuestro `id`, que es justo lo que el enum del vendor no sabe decir de sí mismo.
+- **`ApiError::UnknownFailure`** en vez de reutilizar `UnknownControl`: un id de fallo y un nombre de control son espacios de nombres distintos, y el mensaje debe apuntar a `list_failures()`, no a `list_variables()`. En los bindings el `match` de `to_pyerr` es exhaustivo sin `_ =>` a propósito: la variante nueva rompe la compilación justo donde hay que decidir la excepción Python (`UnknownFailureError`).
+- **Idempotencia**: inyectar dos veces o limpiar algo no activo son no-ops, no errores. Es la semántica de un conjunto, y le ahorra al agente LLM tener que llevar la cuenta.
+- **No existe fallo de batería ni de contactor** en todo el enum de FBW (`battery.rs` no tiene campo `Failure`). Los únicos componentes eléctricos fallables son generadores, TRs, static inverter y buses. Queda documentado en el módulo: el proxy más cercano a "pérdida de batería" es `elec.bus.dc_bat`. No se inventa un id que el vendor no puede honrar.
+
+**Hallazgo del test de integración** (`core-rs/tests/failure_injection.rs`): "inyectar y limpiar devuelve el sistema al estado previo" solo se sostiene para el **estado discreto** de la red (`*_IS_POWERED`, `*_POTENTIAL_NORMAL`). Las magnitudes continuas no vuelven, y es correcto que no vuelvan: `ELEC_BAT_1_CURRENT` refleja que la batería se descargó un poco mientras el TR estaba fallado. Exigir el snapshot entero sería exigir que el avión olvide que el fallo ocurrió.
+
 ## Hitos
 
 ### Fase 1 cerrada — 2026-07-15

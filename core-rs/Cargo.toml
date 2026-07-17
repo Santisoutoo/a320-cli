@@ -8,6 +8,10 @@ license = "GPL-3.0"
 systems = { path = "vendor/aircraft/fbw-common/src/wasm/systems/systems" }
 a320_systems = { path = "vendor/aircraft/fbw-a32nx/src/wasm/systems/a320_systems" }
 uom = "0.37.0"
+# `Simulation::update_active_failures` toma un `FxHashSet<FailureType>`, así que
+# el tipo tiene que ser EL MISMO que compila `systems`: misma versión que declara
+# su Cargo.toml. No es una dependencia de conveniencia, es el tipo del contrato.
+rustc-hash = "2.1.1"
 
 # Paquete independiente: no pertenece al workspace del vendor. El exclude es
 # imprescindible: sin él, cargo intenta resolver la herencia `workspace = true`

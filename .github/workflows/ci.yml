@@ -72,6 +72,13 @@ jobs:
           cargo run | tee demo.out
           grep -q '\[ext pwr ON\] *AC_1=ON' demo.out \
             || { echo "::error::el AC_1 bus no se alimento con ext pwr ON"; exit 1; }
+          # Fase 2 (#14): el fallo del TR 1 debe RECONFIGURAR la red, no apagarla.
+          # Se exige el par completo (TR_1 caido Y DC_1 vivo): si solo se mirase
+          # el TR, una inyeccion que apagara media red pasaria por buena.
+          grep -q '\[fail TR 1\] *AC_1=ON *DC_1=ON .*TR_1_OK=off' demo.out \
+            || { echo "::error::el fallo del TR 1 no reconfiguro la red (se esperaba TR_1_OK=off con DC_1=ON via bus tie)"; exit 1; }
+          grep -q '\[unfail TR 1\] .*TR_1_OK=ON' demo.out \
+            || { echo "::error::limpiar el fallo del TR 1 no restauro su potencial normal"; exit 1; }
 
   lint:
     name: lint

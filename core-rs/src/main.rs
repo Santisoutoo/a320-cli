@@ -52,4 +52,21 @@ fn main() {
     sim.set("OVHD_ELEC_EXT_PWR_PB_IS_ON", 1.0).unwrap();
     sim.run(2.0, 5.0);
     report("[ext pwr ON]", &sim.get(OBSERVED).unwrap());
+
+    // Fallo del TR 1 por id estable (Fase 2, #14). Lo interesante no es que algo
+    // se apague, sino que la red se **reconfigura**: el DC 1 se sigue
+    // alimentando por el bus tie, como en el avión real, mientras el TR 1 deja
+    // de dar potencial normal.
+    sim.inject_failure("elec.tr.1").unwrap();
+    sim.run(2.0, 5.0);
+    report("[fail TR 1]", &sim.get(OBSERVED).unwrap());
+    println!(
+        "                 fallos activos: {:?}",
+        sim.active_failures()
+    );
+
+    // Y limpiarlo devuelve el TR a su estado normal.
+    sim.clear_failure("elec.tr.1").unwrap();
+    sim.run(2.0, 5.0);
+    report("[unfail TR 1]", &sim.get(OBSERVED).unwrap());
 }
