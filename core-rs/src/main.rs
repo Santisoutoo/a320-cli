@@ -60,7 +60,10 @@ fn main() {
     sim.inject_failure("elec.tr.1").unwrap();
     sim.run(2.0, 5.0);
     report("[fail TR 1]", &sim.get(OBSERVED).unwrap());
-    println!("                 fallos activos: {:?}", sim.active_failures());
+    println!(
+        "                 fallos activos: {:?}",
+        sim.active_failures()
+    );
 
     // Y limpiarlo devuelve el TR a su estado normal.
     sim.clear_failure("elec.tr.1").unwrap();
