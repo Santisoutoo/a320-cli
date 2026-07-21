@@ -1,107 +1,49 @@
-"""The data-driven manifest of what the TUI observes and actuates.
+"""The data-driven manifest of what the TUI observes per tick.
 
-Two halves:
+The wiring itself (which YAML control maps to which sim name and LVARs)
+lives in ``wiring.py``, keyed by the model's canonical ids. This module
+keeps the observation side: the synoptic/voltmeter var lists and
+``manifest_vars()``, the union everything one tick needs to read via the
+selective ``get`` — never ``snapshot()``, which builds a dict of hundreds
+of vars per call.
 
-- ``BUTTON_OVERLAYS``: display metadata (legend, Korry light semantics, which
-  LVARs feed each light) layered on top of the curated control catalog the core
-  already exposes via ``list_controls()``. A control without an overlay still
-  gets a generic ON/OFF button, so new Phase-4 controls appear "ugly but
-  functional" without touching the TUI.
-- ``SYNOPTIC_VARS``: the LVARs the ELEC synoptic page needs.
-
-The union of both is the argument of the selective ``get`` the tick performs —
-never ``snapshot()``, which builds a dict of hundreds of vars per call.
+``BUTTON_OVERLAYS``/``EXTRA_PANEL_SPECS`` are compatibility views of the
+wiring keyed the way the 35VU geometry consumes them (catalog friendly
+name / legacy extra name); they disappear with the geometry switchover.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from a320_tui.wiring import WIRING, WORLD_SPECS, ButtonSpec
 
+__all__ = [
+    "BAT_DISPLAY_VARS",
+    "BUTTON_OVERLAYS",
+    "ButtonSpec",
+    "EXTRA_PANEL_SPECS",
+    "PANEL_LEFT_STACK",
+    "PANEL_SOURCES_ROW",
+    "PANEL_TOP_ROW",
+    "PLACED_CONTROLS",
+    "SYNOPTIC_VARS",
+    "button_specs",
+    "manifest_vars",
+]
 
-@dataclass(frozen=True)
-class ButtonSpec:
-    control: str            # name for sim.set: friendly (catalog) or raw LVAR
-    legend: str             # panel legend, e.g. "BAT 1"
-    style: str              # "auto_off" | "on_off" | "on_avail" | "normal_altn" | "world"
-    state_var: str          # pushbutton position LVAR (1 = pressed/auto/on/normal)
-    fault_var: Optional[str] = None   # amber FAULT light, if the pb has one
-    avail_var: Optional[str] = None   # green AVAIL light (ext pwr style)
-
-    def vars(self) -> list[str]:
-        out = [self.state_var]
-        if self.fault_var:
-            out.append(self.fault_var)
-        if self.avail_var:
-            out.append(self.avail_var)
-        return out
-
-
-# Keyed by the control's friendly name in the curated catalog.
+# Wired specs whose `control` is a curated-catalog friendly name (lowercase),
+# keyed by that name — plus the world/scenario specs, which share the shape.
 BUTTON_OVERLAYS: dict[str, ButtonSpec] = {
-    "bat_1": ButtonSpec(
-        "bat_1", "BAT 1", "auto_off",
-        "OVHD_ELEC_BAT_1_PB_IS_AUTO", "OVHD_ELEC_BAT_1_PB_HAS_FAULT",
-    ),
-    "bat_2": ButtonSpec(
-        "bat_2", "BAT 2", "auto_off",
-        "OVHD_ELEC_BAT_2_PB_IS_AUTO", "OVHD_ELEC_BAT_2_PB_HAS_FAULT",
-    ),
-    "ext_pwr": ButtonSpec(
-        "ext_pwr", "EXT PWR", "on_avail",
-        "OVHD_ELEC_EXT_PWR_PB_IS_ON",
-        # OVHD_ELEC_EXT_PWR_PB_IS_AVAILABLE never rises in the headless build;
-        # the GPU's potential-normal flag is the honest availability signal.
-        avail_var="ELEC_EXT_PWR_POTENTIAL_NORMAL",
-    ),
-    "apu_gen": ButtonSpec(
-        "apu_gen", "APU GEN", "on_off",
-        "OVHD_ELEC_APU_GEN_PB_IS_ON", "OVHD_ELEC_APU_GEN_PB_HAS_FAULT",
-    ),
-    "bus_tie": ButtonSpec(
-        "bus_tie", "BUS TIE", "auto_off",
-        "OVHD_ELEC_BUS_TIE_PB_IS_AUTO", "OVHD_ELEC_BUS_TIE_PB_HAS_FAULT",
-    ),
-    "gen_1": ButtonSpec(
-        "gen_1", "GEN 1", "on_off",
-        "OVHD_ELEC_ENG_GEN_1_PB_IS_ON", "OVHD_ELEC_ENG_GEN_1_PB_HAS_FAULT",
-    ),
-    "gen_2": ButtonSpec(
-        "gen_2", "GEN 2", "on_off",
-        "OVHD_ELEC_ENG_GEN_2_PB_IS_ON", "OVHD_ELEC_ENG_GEN_2_PB_HAS_FAULT",
-    ),
-    "ext_pwr_avail": ButtonSpec(
-        "ext_pwr_avail", "GPU", "world", "EXT_PWR_AVAIL:1",
-    ),
-}
+    spec.control: spec
+    for spec in WIRING.values()
+    if not spec.control.startswith("OVHD_")
+} | WORLD_SPECS
 
-
-# Panel hardware FBW models that is NOT in the curated catalog (yet). These
-# actuate through the documented raw-LVAR path of `sim.set` (D-008/D-009) —
-# the same thing `set OVHD_...` does in the REPL. They exist so the overhead
-# geometry can match the real 35VU panel; if one graduates into the catalog,
-# its overlay moves to BUTTON_OVERLAYS and this entry is deleted.
-#
-# Verified against the vendored Rust (a320_systems/src/electrical/mod.rs):
-#   :283  ac_ess_feed  NormalAltnFaultPushButton::new_normal("ELEC_AC_ESS_FEED")
-#   :284  galy_and_cab AutoOffFaultPushButton::new_auto("ELEC_GALY_AND_CAB")
-#   :286  commercial   OnOffFaultPushButton::new_on("ELEC_COMMERCIAL")
+# Wired specs that actuate through the documented raw-LVAR path (D-008/D-009),
+# keyed by their legacy manifest name for the 35VU geometry below.
 EXTRA_PANEL_SPECS: dict[str, ButtonSpec] = {
-    "ac_ess_feed": ButtonSpec(
-        "OVHD_ELEC_AC_ESS_FEED_PB_IS_NORMAL", "AC ESS FEED", "normal_altn",
-        "OVHD_ELEC_AC_ESS_FEED_PB_IS_NORMAL",
-        "OVHD_ELEC_AC_ESS_FEED_PB_HAS_FAULT",
-    ),
-    "commercial": ButtonSpec(
-        "OVHD_ELEC_COMMERCIAL_PB_IS_ON", "COMMERCIAL", "on_off",
-        "OVHD_ELEC_COMMERCIAL_PB_IS_ON",
-        "OVHD_ELEC_COMMERCIAL_PB_HAS_FAULT",
-    ),
-    "galy_and_cab": ButtonSpec(
-        "OVHD_ELEC_GALY_AND_CAB_PB_IS_AUTO", "GALY & CAB", "auto_off",
-        "OVHD_ELEC_GALY_AND_CAB_PB_IS_AUTO",
-        "OVHD_ELEC_GALY_AND_CAB_PB_HAS_FAULT",
-    ),
+    "ac_ess_feed": WIRING["AC_ESS_FEED"],
+    "commercial": WIRING["COMMERCIAL"],
+    "galy_and_cab": WIRING["GALY_CAB"],
 }
 
 
@@ -187,7 +129,7 @@ def manifest_vars(controls: list[dict]) -> list[str]:
     for spec in button_specs(controls):
         for name in spec.vars():
             seen.setdefault(name)
-    for spec in EXTRA_PANEL_SPECS.values():
+    for spec in WIRING.values():
         for name in spec.vars():
             seen.setdefault(name)
     return list(seen)

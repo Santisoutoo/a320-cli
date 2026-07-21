@@ -82,6 +82,10 @@ class KorryButton(Static, can_focus=True):
         elif spec.style == "on_avail":
             top = ("AVAIL", _GREEN) if (avail and not pb_on) else (_UNLIT, _DARK)
             bottom = ("ON", _BLUE) if pb_on else (_UNLIT, _DARK)
+        elif spec.style == "fault_on":
+            # APU MASTER SW style: blue ON when engaged, dark when released.
+            top = ("FAULT", _AMBER) if fault else (_UNLIT, _DARK)
+            bottom = ("ON", _BLUE) if pb_on else (_UNLIT, _DARK)
         elif spec.style == "normal_altn":
             # AC ESS FEED: released = NORMAL (dark), pressed = ALTN (white).
             top = ("FAULT", _AMBER) if fault else (_UNLIT, _DARK)
