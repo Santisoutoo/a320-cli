@@ -40,7 +40,7 @@ Homepage = "https://github.com/Santisoutoo/a320-cli"
 Repository = "https://github.com/Santisoutoo/a320-cli"
 
 [tool.setuptools]
-packages = ["a320_tui", "a320_tui.widgets", "a320_tui.model"]
+packages = ["a320_tui", "a320_tui.widgets", "a320_tui.model", "a320_tui.layouts"]
 
 [tool.setuptools.package-data]
 a320_tui = ["styles/*.tcss", "model/*.yaml"]
