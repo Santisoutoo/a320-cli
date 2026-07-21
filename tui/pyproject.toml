@@ -28,6 +28,8 @@ dependencies = [
     "a320-cli",
     # Minor-range pin: Textual's API moves fast; bumping is a conscious PR.
     "textual>=8.2,<8.3",
+    # Parses the vendored cockpit controls model (a320_tui/model/*.yaml).
+    "pyyaml>=6",
 ]
 
 [project.scripts]
@@ -38,7 +40,7 @@ Homepage = "https://github.com/Santisoutoo/a320-cli"
 Repository = "https://github.com/Santisoutoo/a320-cli"
 
 [tool.setuptools]
-packages = ["a320_tui", "a320_tui.widgets"]
+packages = ["a320_tui", "a320_tui.widgets", "a320_tui.model"]
 
 [tool.setuptools.package-data]
-a320_tui = ["styles/*.tcss"]
+a320_tui = ["styles/*.tcss", "model/*.yaml"]

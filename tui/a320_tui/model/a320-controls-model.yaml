@@ -1,0 +1,474 @@
+# ============================================================
+# A320 — Modelo de controles por panel (para TUI / sim de sistemas)
+# Convenciones Airbus:
+#   - Filosofía "lights out": en vuelo normal ningún korry iluminado
+#   - Colores luces: FAULT=ambar, "OFF"/alerta blanca=blanco,
+#     "ON"/"AVAIL"/"DECEL"=azul/verde, FIRE=rojo
+#   - pb con "OFF" blanco: pulsado = fuera de auto (luz OFF encendida)
+# ============================================================
+
+types:
+  pb:        "Korry pushbutton latched: {pressed: bool, lights: {<n>: bool}}"
+  pb_mom:    "Pushbutton momentáneo (spring-loaded)"
+  pb_guard:  "Korry con guarda roja: {guard_open: bool, pressed: bool, lights}"
+  fire_pb:   "Fire pushbutton: {popped_out: bool, light_FIRE: bool}"
+  sel:       "Selector rotatorio N posiciones: {pos: str}"
+  knob:      "Rotatorio continuo: {value: float 0..1 o rango}"
+  knob_pp:   "Knob FCU push/pull: {value, managed: bool}  (push=managed, pull=selected)"
+  sw:        "Toggle/switch 2-3 posiciones: {pos: str}"
+  lever:     "Palanca con detents: {pos: str|float}"
+  wheel:     "Continuo bidireccional: {value: float}"
+  light:     "Solo anunciador, no accionable: {on: bool}"
+  gauge:     "Solo indicación analógica: {value}"
+
+# ============================================================
+panels:
+
+  # ----------------------------------------------------------
+  overhead_aft:
+    circuit_breakers:
+      - {id: CB_ARRAY, type: sw, note: "matriz de C/Bs monitorizados; cada uno {pulled: bool}"}
+    maintenance:
+      - {id: ENG1_FADEC_GND_PWR, type: pb, lights: ["ON"]}
+      - {id: ENG2_FADEC_GND_PWR, type: pb, lights: ["ON"]}
+      - {id: BLUE_PUMP_OVRD,     type: pb_guard, lights: ["ON"]}
+      - {id: HYD_LEAK_VLV_G,     type: pb_guard, lights: ["OFF"]}
+      - {id: HYD_LEAK_VLV_B,     type: pb_guard, lights: ["OFF"]}
+      - {id: HYD_LEAK_VLV_Y,     type: pb_guard, lights: ["OFF"]}
+      - {id: SVCE_INT_OVRD,      type: pb, lights: ["ON"]}
+      - {id: OXY_TMR_RESET,      type: pb_mom}
+      - {id: AVIONICS_COMP_LT,   type: sw, pos: ["ON", "OFF"], def: "OFF"}
+    elt:
+      - {id: ELT, type: sw, pos: ["ARM", "ON", "TEST_RESET"], def: "ARM"}
+    lights:
+      - {id: READING_LT_CAPT, type: knob}
+      - {id: READING_LT_FO,   type: knob}
+      - {id: DOME_LT,         type: sw, pos: ["BRT", "DIM", "OFF"], def: "OFF"}
+
+  # ----------------------------------------------------------
+  overhead_fwd:
+
+    f_ctl_left:                     # panel 24VU (lado CAPT)
+      - {id: ELAC_1, type: pb, lights: [FAULT, "OFF"]}
+      - {id: SEC_1,  type: pb, lights: [FAULT, "OFF"]}
+      - {id: FAC_1,  type: pb, lights: [FAULT, "OFF"]}
+    f_ctl_right:                    # lado F/O
+      - {id: ELAC_2, type: pb, lights: [FAULT, "OFF"]}
+      - {id: SEC_2,  type: pb, lights: [FAULT, "OFF"]}
+      - {id: SEC_3,  type: pb, lights: [FAULT, "OFF"]}
+      - {id: FAC_2,  type: pb, lights: [FAULT, "OFF"]}
+
+    adirs:
+      - {id: IR1_MODE, type: sel, pos: ["OFF", NAV, ATT], def: "OFF"}
+      - {id: IR2_MODE, type: sel, pos: ["OFF", NAV, ATT], def: "OFF"}
+      - {id: IR3_MODE, type: sel, pos: ["OFF", NAV, ATT], def: "OFF"}
+      - {id: IR1, type: pb, lights: [FAULT, "OFF"]}   # + luz ON BAT
+      - {id: IR2, type: pb, lights: [FAULT, "OFF"]}
+      - {id: IR3, type: pb, lights: [FAULT, "OFF"]}
+      - {id: ADR1, type: pb, lights: [FAULT, "OFF"]}
+      - {id: ADR2, type: pb, lights: [FAULT, "OFF"]}
+      - {id: ADR3, type: pb, lights: [FAULT, "OFF"]}
+      - {id: ON_BAT, type: light}
+      - {id: ADIRS_DATA_SEL, type: sel, pos: [TEST, TK_GS, PPOS, WIND, HDG, STS], def: PPOS}
+      - {id: ADIRS_SYS_SEL,  type: sel, pos: ["1", "2", "3", "OFF"], def: "OFF"}
+
+    evac:
+      - {id: EVAC_COMMAND,   type: pb_guard, lights: ["EVAC"]}
+      - {id: HORN_SHUT_OFF,  type: pb_mom}
+      - {id: EVAC_CAPT_PURS, type: sw, pos: [CAPT, CAPT_AND_PURS], def: CAPT}
+
+    emer_elec_pwr:
+      - {id: RAT_EMER_GEN_FAULT, type: light}
+      - {id: EMER_GEN_TEST,      type: pb_guard}
+      - {id: EMER_MAN_ON,        type: pb_guard}
+      - {id: GEN1_LINE,          type: pb, lights: [SMOKE, "OFF"]}
+
+    gpws:
+      - {id: GPWS_TERR,     type: pb, lights: [FAULT, "OFF"]}
+      - {id: GPWS_SYS,      type: pb, lights: [FAULT, "OFF"]}
+      - {id: GPWS_GS_MODE,  type: pb, lights: ["OFF"]}
+      - {id: GPWS_FLAP_MODE,type: pb, lights: ["OFF"]}
+      - {id: GPWS_LDG_FLAP3,type: pb, lights: ["ON"]}
+
+    rcdr:
+      - {id: CVR_GND_CTL, type: pb, lights: ["ON"]}
+      - {id: CVR_ERASE,   type: pb_mom}
+      - {id: CVR_TEST,    type: pb_mom}
+
+    oxygen:
+      - {id: OXY_MASK_MAN_ON, type: pb_guard}
+      - {id: OXY_PASSENGER,   type: pb_guard, lights: [SYS_ON]}
+      - {id: OXY_CREW_SUPPLY, type: pb, lights: ["OFF"]}
+
+    cockpit_door:
+      - {id: CKPT_DOOR_VIDEO, type: pb, lights: ["ON"], note: "muestra video en ECAM"}
+
+    calls:
+      - {id: CALL_MECH, type: pb_mom, lights: ["ON"]}
+      - {id: CALL_FWD,  type: pb_mom, lights: ["ON"]}
+      - {id: CALL_AFT,  type: pb_mom, lights: ["ON"]}
+      - {id: CALL_EMER, type: pb_guard, lights: ["ON", CALL]}
+
+    wipers:
+      - {id: WIPER_CAPT, type: sel, pos: ["OFF", SLOW, FAST], def: "OFF"}
+      - {id: WIPER_FO,   type: sel, pos: ["OFF", SLOW, FAST], def: "OFF"}
+      - {id: RAIN_RPLNT_CAPT, type: pb_mom}
+      - {id: RAIN_RPLNT_FO,   type: pb_mom}
+
+    fire:
+      - {id: ENG1_FIRE_PB, type: fire_pb}
+      - {id: ENG1_AGENT_1, type: pb_mom, lights: [SQUIB, DISCH]}
+      - {id: ENG1_AGENT_2, type: pb_mom, lights: [SQUIB, DISCH]}
+      - {id: ENG1_FIRE_TEST, type: pb_mom}
+      - {id: ENG2_FIRE_PB, type: fire_pb}
+      - {id: ENG2_AGENT_1, type: pb_mom, lights: [SQUIB, DISCH]}
+      - {id: ENG2_AGENT_2, type: pb_mom, lights: [SQUIB, DISCH]}
+      - {id: ENG2_FIRE_TEST, type: pb_mom}
+      - {id: APU_FIRE_PB,  type: fire_pb}
+      - {id: APU_AGENT,    type: pb_mom, lights: [SQUIB, DISCH]}
+      - {id: APU_FIRE_TEST, type: pb_mom}
+
+    hyd:
+      - {id: ENG1_PUMP,   type: pb, lights: [FAULT, "OFF"]}
+      - {id: ENG2_PUMP,   type: pb, lights: [FAULT, "OFF"]}
+      - {id: ELEC_PUMP_B, type: pb, lights: [FAULT, "OFF"], note: "AUTO por defecto"}
+      - {id: ELEC_PUMP_Y, type: pb, lights: [FAULT, "ON"], note: "ON manual"}
+      - {id: PTU,         type: pb, lights: [FAULT, "OFF"]}
+      - {id: RAT_MAN_ON,  type: pb_guard}
+
+    fuel:
+      - {id: L_TK_PUMP_1, type: pb, lights: [FAULT, "OFF"]}
+      - {id: L_TK_PUMP_2, type: pb, lights: [FAULT, "OFF"]}
+      - {id: CTR_TK_PUMP_1, type: pb, lights: [FAULT, "OFF"]}
+      - {id: CTR_TK_PUMP_2, type: pb, lights: [FAULT, "OFF"]}
+      - {id: R_TK_PUMP_1, type: pb, lights: [FAULT, "OFF"]}
+      - {id: R_TK_PUMP_2, type: pb, lights: [FAULT, "OFF"]}
+      - {id: FUEL_MODE_SEL, type: pb, lights: [FAULT, MAN]}
+      - {id: X_FEED,      type: pb, lights: ["ON", OPEN]}
+
+    elec:
+      - {id: BAT_1,    type: pb, lights: [FAULT, "OFF"]}
+      - {id: BAT_2,    type: pb, lights: [FAULT, "OFF"]}
+      - {id: BAT_DISPLAY, type: gauge, note: "voltaje BAT 1/2"}
+      - {id: EXT_PWR,  type: pb, lights: [AVAIL, "ON"]}
+      - {id: GEN_1,    type: pb, lights: [FAULT, "OFF"]}
+      - {id: GEN_2,    type: pb, lights: [FAULT, "OFF"]}
+      - {id: APU_GEN,  type: pb, lights: [FAULT, "OFF"]}
+      - {id: BUS_TIE,  type: pb, lights: ["OFF"]}
+      - {id: AC_ESS_FEED, type: pb, lights: [FAULT, ALTN]}
+      - {id: IDG_1,    type: pb_guard, lights: [FAULT]}
+      - {id: IDG_2,    type: pb_guard, lights: [FAULT]}
+      - {id: GALY_CAB, type: pb, lights: [FAULT, "OFF"]}
+      - {id: COMMERCIAL, type: pb, lights: [FAULT, "OFF"]}
+
+    air_cond:
+      - {id: PACK_1,     type: pb, lights: [FAULT, "OFF"]}
+      - {id: PACK_2,     type: pb, lights: [FAULT, "OFF"]}
+      - {id: PACK_FLOW,  type: sel, pos: [LO, NORM, HI], def: NORM}
+      - {id: TEMP_COCKPIT, type: knob, range: [18, 30]}
+      - {id: TEMP_FWD_CAB, type: knob, range: [18, 30]}
+      - {id: TEMP_AFT_CAB, type: knob, range: [18, 30]}
+      - {id: HOT_AIR,    type: pb, lights: [FAULT, "OFF"]}
+      - {id: ENG1_BLEED, type: pb, lights: [FAULT, "OFF"]}
+      - {id: ENG2_BLEED, type: pb, lights: [FAULT, "OFF"]}
+      - {id: APU_BLEED,  type: pb, lights: [FAULT, "ON"]}
+      - {id: X_BLEED,    type: sel, pos: [SHUT, AUTO, OPEN], def: AUTO}
+      - {id: RAM_AIR,    type: pb_guard, lights: ["ON"]}
+
+    anti_ice:
+      - {id: WING_ANTI_ICE, type: pb, lights: [FAULT, "ON"]}
+      - {id: ENG1_ANTI_ICE, type: pb, lights: [FAULT, "ON"]}
+      - {id: ENG2_ANTI_ICE, type: pb, lights: [FAULT, "ON"]}
+      - {id: PROBE_WINDOW_HEAT, type: pb, lights: ["ON"]}
+
+    cabin_press:
+      - {id: PRESS_MODE_SEL, type: pb, lights: [FAULT, MAN]}
+      - {id: MAN_VS_CTL,     type: sw, pos: [UP, NEUTRAL, DN], def: NEUTRAL, note: "spring-loaded a NEUTRAL"}
+      - {id: LDG_ELEV,       type: knob, range: [-2000, 14000], def: AUTO}
+      - {id: DITCHING,       type: pb_guard, lights: ["ON"]}
+
+    ventilation:
+      - {id: BLOWER,   type: pb, lights: [FAULT, OVRD]}
+      - {id: EXTRACT,  type: pb, lights: [FAULT, OVRD]}
+      - {id: CAB_FANS, type: pb, lights: ["OFF"]}
+
+    cargo:
+      - {id: CARGO_FWD_ISOL_VALVE, type: pb, lights: [FAULT, "OFF"]}
+      - {id: CARGO_AFT_ISOL_VALVE, type: pb, lights: [FAULT, "OFF"]}
+      - {id: CARGO_HEAT_FWD_TEMP,  type: knob, range: [COLD, HOT]}
+      - {id: CARGO_HEAT_AFT_TEMP,  type: knob, range: [COLD, HOT]}
+      - {id: CARGO_HOT_AIR,        type: pb, lights: [FAULT, "OFF"]}
+      - {id: CARGO_SMOKE_FWD,      type: light}
+      - {id: CARGO_SMOKE_AFT,      type: light}
+      - {id: CARGO_SMOKE_DISCH,    type: pb_guard, lights: [DISCH]}
+
+    eng_man_start:
+      - {id: ENG1_MAN_START, type: pb, lights: ["ON"]}
+      - {id: ENG2_MAN_START, type: pb, lights: ["ON"]}
+      - {id: ENG1_N1_MODE, type: pb, lights: ["ON"], note: "solo CFM56"}
+      - {id: ENG2_N1_MODE, type: pb, lights: ["ON"], note: "solo CFM56"}
+
+    apu:
+      - {id: APU_MASTER_SW, type: pb, lights: [FAULT, "ON"]}
+      - {id: APU_START,     type: pb, lights: [AVAIL, "ON"]}
+
+    signs:
+      - {id: SEAT_BELTS,  type: sw, pos: ["ON", "OFF"], def: "OFF"}
+      - {id: NO_SMOKING,  type: sw, pos: ["ON", AUTO, "OFF"], def: AUTO}
+      - {id: EMER_EXIT_LT, type: sw, pos: ["ON", ARM, "OFF"], def: ARM}
+
+    rmp3_acp3:
+      note: "mismo modelo que pedestal.rmp / pedestal.acp"
+
+    ext_lt:
+      - {id: STROBE,       type: sw, pos: ["ON", AUTO, "OFF"], def: "OFF"}
+      - {id: BEACON,       type: sw, pos: ["ON", "OFF"], def: "OFF"}
+      - {id: WING_LT,      type: sw, pos: ["ON", "OFF"], def: "OFF"}
+      - {id: NAV_LOGO,     type: sw, pos: ["1", "2", "OFF"], def: "OFF"}
+      - {id: RWY_TURN_OFF, type: sw, pos: ["ON", "OFF"], def: "OFF"}
+      - {id: LAND_L,       type: sw, pos: ["ON", "OFF", RETR], def: RETR}
+      - {id: LAND_R,       type: sw, pos: ["ON", "OFF", RETR], def: RETR}
+      - {id: NOSE,         type: sw, pos: [TO, TAXI, "OFF"], def: "OFF"}
+
+    int_lt:
+      - {id: DOME,       type: sw, pos: [BRT, DIM, "OFF"], def: "OFF"}
+      - {id: ANN_LT,     type: sw, pos: [TEST, BRT, DIM], def: BRT}
+      - {id: STBY_COMPASS, type: sw, pos: ["ON", "OFF"], def: "OFF"}
+      - {id: INTEG_LT,   type: knob}
+      - {id: OVHD_INTEG_LT, type: knob}
+
+  # ----------------------------------------------------------
+  glareshield:
+
+    fcu:
+      - {id: SPD_MACH_KNOB, type: knob_pp, range: [100, 399], note: "en Mach 0.10-0.99"}
+      - {id: SPD_MACH_PB,   type: pb_mom, note: "alterna SPD <-> MACH"}
+      - {id: HDG_KNOB,      type: knob_pp, range: [0, 359]}
+      - {id: HDG_VS_TRK_FPA_PB, type: pb_mom, note: "alterna HDG-V/S <-> TRK-FPA"}
+      - {id: ALT_KNOB,      type: knob_pp, range: [100, 49000]}
+      - {id: ALT_INCREMENT, type: sel, pos: ["100", "1000"], def: "100", note: "anillo exterior"}
+      - {id: VS_FPA_KNOB,   type: knob_pp, range: [-6000, 6000], note: "push = level off"}
+      - {id: AP1,   type: pb, lights: ["ON"]}
+      - {id: AP2,   type: pb, lights: ["ON"]}
+      - {id: A_THR, type: pb, lights: ["ON"]}
+      - {id: EXPED, type: pb, lights: ["ON"]}
+      - {id: APPR,  type: pb, lights: ["ON"]}
+      - {id: LOC,   type: pb, lights: ["ON"]}
+      - {id: METRIC_ALT, type: pb_mom}
+      - {id: FCU_DISPLAY, type: gauge, note: "SPD | HDG | ALT | V/S + dots managed"}
+
+    efis:                       # x2: instanciar como EFIS_CAPT y EFIS_FO
+      - {id: BARO_KNOB,   type: knob_pp, note: "rotar=QNH, push=STD, pull=QNH"}
+      - {id: BARO_UNIT,   type: sel, pos: [inHg, hPa], def: hPa}
+      - {id: FD,          type: pb, lights: ["ON"], def_on: true}
+      - {id: LS,          type: pb, lights: ["ON"]}
+      - {id: ND_MODE,     type: sel, pos: [ROSE_ILS, ROSE_VOR, ROSE_NAV, ARC, PLAN], def: ARC}
+      - {id: ND_RANGE,    type: sel, pos: ["10", "20", "40", "80", "160", "320"], def: "80"}
+      - {id: FILTER_CSTR, type: pb, lights: ["ON"], note: "excluyentes entre sí"}
+      - {id: FILTER_WPT,  type: pb, lights: ["ON"]}
+      - {id: FILTER_VORD, type: pb, lights: ["ON"]}
+      - {id: FILTER_NDB,  type: pb, lights: ["ON"]}
+      - {id: FILTER_ARPT, type: pb, lights: ["ON"]}
+      - {id: ADF_VOR_1,   type: sw, pos: [ADF, "OFF", VOR], def: "OFF"}
+      - {id: ADF_VOR_2,   type: sw, pos: [ADF, "OFF", VOR], def: "OFF"}
+
+    warnings:                   # x2 (CAPT y F/O) salvo AUTOLAND
+      - {id: MASTER_WARN, type: pb_mom, lights: [MASTER_WARN], note: "push = cancel, rojo"}
+      - {id: MASTER_CAUT, type: pb_mom, lights: [MASTER_CAUT], note: "ambar"}
+      - {id: AUTOLAND,    type: light}
+      - {id: SIDESTICK_PRIORITY, type: light, note: "flecha + CAPT/F-O verde/rojo"}
+      - {id: ATC_MSG,     type: light}
+      - {id: CHRONO,      type: pb_mom, note: "chrono en ND"}
+
+  # ----------------------------------------------------------
+  main_panel:
+
+    displays:
+      - {id: PFD_CAPT, type: gauge}
+      - {id: ND_CAPT,  type: gauge}
+      - {id: PFD_FO,   type: gauge}
+      - {id: ND_FO,    type: gauge}
+      - {id: EWD,      type: gauge, note: "ECAM superior"}
+      - {id: SD,       type: gauge, note: "ECAM inferior"}
+      - {id: PFD_BRT_CAPT, type: knob}
+      - {id: ND_BRT_CAPT,  type: knob}
+      - {id: PFD_BRT_FO,   type: knob}
+      - {id: ND_BRT_FO,    type: knob}
+      - {id: PFD_ND_XFR_CAPT, type: pb_mom}
+      - {id: PFD_ND_XFR_FO,   type: pb_mom}
+      - {id: TERR_ON_ND_CAPT, type: pb, lights: ["ON"]}
+      - {id: TERR_ON_ND_FO,   type: pb, lights: ["ON"]}
+
+    isis:
+      - {id: ISIS_DISPLAY, type: gauge}
+      - {id: ISIS_BARO,    type: knob}
+      - {id: ISIS_LS,      type: pb_mom}
+      - {id: ISIS_BUGS,    type: pb_mom}
+      - {id: ISIS_RST,     type: pb_mom}
+      - {id: ISIS_PLUS,    type: pb_mom}
+      - {id: ISIS_MINUS,   type: pb_mom}
+
+    ddrmi:
+      - {id: DDRMI_SEL_1, type: sw, pos: [VOR, ADF], def: VOR}
+      - {id: DDRMI_SEL_2, type: sw, pos: [VOR, ADF], def: VOR}
+
+    clock:
+      - {id: CHR_START_STOP_RST, type: pb_mom}
+      - {id: ET_SEL,  type: sel, pos: [RUN, STP, RST], def: STP}
+      - {id: UTC_SEL, type: sel, pos: [GPS, INT, SET], def: GPS}
+      - {id: DATE,    type: pb_mom}
+
+    landing_gear:
+      - {id: LDG_GEAR_LEVER, type: lever, pos: [UP, DOWN], def: DOWN}
+      - {id: LDG_GEAR_RED_ARROW, type: light}
+      - {id: GEAR_IND, type: light, note: "3x triangulo verde (locked down) + UNLK rojo"}
+
+    brakes:
+      - {id: AUTO_BRK_LO,  type: pb, lights: ["ON", DECEL]}
+      - {id: AUTO_BRK_MED, type: pb, lights: ["ON", DECEL]}
+      - {id: AUTO_BRK_MAX, type: pb, lights: ["ON", DECEL]}
+      - {id: ASKID_NWS,    type: sw, pos: ["ON", "OFF"], def: "ON"}
+      - {id: BRK_PRESS_IND, type: gauge, note: "triple: ACCU + L + R (yellow sys)"}
+      - {id: BRK_FAN,      type: pb, lights: [HOT, "ON"], note: "opcional"}
+
+  # ----------------------------------------------------------
+  pedestal:
+
+    mcdu:                       # x2: MCDU_1 y MCDU_2
+      - {id: DISPLAY, type: gauge, note: "14 lineas: titulo + 6 pares label/dato + scratchpad"}
+      - {id: LSK, type: pb_mom, count: 12, note: "1L-6L, 1R-6R"}
+      - {id: PAGE_KEYS, type: pb_mom,
+         keys: [DIR, PROG, PERF, INIT, DATA, FPLN, RAD_NAV, FUEL_PRED, SEC_FPLN, ATC_COMM, MCDU_MENU, AIRPORT]}
+      - {id: SLEW, type: pb_mom, keys: [UP, DOWN, LEFT, RIGHT]}
+      - {id: ALPHA, type: pb_mom, keys: [A-Z, SP, OVFY, CLR, SLASH]}
+      - {id: NUMERIC, type: pb_mom, keys: ["0-9", DOT, PLUS_MINUS]}
+      - {id: BRT, type: knob}
+      - {id: ANNUNCIATORS, type: light, keys: [FMGC, FAIL, MCDU_MENU, FM1, FM2, IND]}
+
+    rmp:                        # x3: RMP_1, RMP_2, RMP_3(ovhd)
+      - {id: FREQ_ACTIVE,  type: gauge}
+      - {id: FREQ_STBY,    type: gauge}
+      - {id: XFER,         type: pb_mom, note: "intercambia active <-> stby"}
+      - {id: TUNE_KNOB,    type: knob, note: "dual concéntrico: MHz + kHz"}
+      - {id: VHF1, type: pb, lights: [SEL_GREEN]}
+      - {id: VHF2, type: pb, lights: [SEL_GREEN]}
+      - {id: VHF3, type: pb, lights: [SEL_GREEN]}
+      - {id: HF1,  type: pb, lights: [SEL_GREEN]}
+      - {id: HF2,  type: pb, lights: [SEL_GREEN]}
+      - {id: AM,   type: pb, lights: [SEL_GREEN]}
+      - {id: NAV_GUARD, type: pb_guard, note: "habilita backup nav tuning"}
+      - {id: VOR,  type: pb, lights: [SEL_GREEN]}
+      - {id: LS,   type: pb, lights: [SEL_GREEN]}
+      - {id: ADF,  type: pb, lights: [SEL_GREEN]}
+      - {id: BFO,  type: pb, lights: [SEL_GREEN]}
+      - {id: ON_OFF, type: sw, pos: ["ON", "OFF"], def: "ON"}
+      - {id: SEL_LIGHT, type: light, note: "ambar si otro RMP sintoniza este lado"}
+
+    acp:                        # x3: ACP_1, ACP_2, ACP_3(ovhd)
+      - {id: TX_KEYS, type: pb, lights: [CALL, SEL],
+         keys: [VHF1, VHF2, VHF3, HF1, HF2, INT, CAB, PA], note: "solo uno activo"}
+      - {id: RX_KNOBS, type: knob,
+         keys: [VHF1, VHF2, VHF3, HF1, HF2, INT, CAB, PA, VOR1, VOR2, MKR, ILS, MLS, ADF1, ADF2],
+         note: "push on/off + rotar volumen"}
+      - {id: INT_RAD, type: sw, pos: [INT, NEUTRAL, RAD], def: NEUTRAL, note: "RAD spring-loaded (PTT)"}
+      - {id: VOICE,   type: pb, lights: ["ON"], note: "filtra ident morse"}
+      - {id: RESET,   type: pb_mom}
+
+    wx_radar:
+      - {id: WX_SYS,  type: sel, pos: ["1", "OFF", "2"], def: "OFF"}
+      - {id: WX_MODE, type: sel, pos: [WX, WX_TURB, TURB, MAP], def: WX}
+      - {id: WX_GAIN, type: knob, note: "CAL + manual"}
+      - {id: WX_TILT, type: knob, range: [-15, 15]}
+      - {id: PWS,     type: sw, pos: [AUTO, "OFF"], def: AUTO}
+      - {id: GCS,     type: sw, pos: [AUTO, "OFF"], def: AUTO}
+      - {id: MULTISCAN, type: sw, pos: [AUTO, MAN], def: AUTO}
+
+    switching:
+      - {id: ATT_HDG_SEL,  type: sel, pos: [CAPT_3, NORM, FO_3], def: NORM}
+      - {id: AIR_DATA_SEL, type: sel, pos: [CAPT_3, NORM, FO_3], def: NORM}
+      - {id: EIS_DMC_SEL,  type: sel, pos: [CAPT_3, NORM, FO_3], def: NORM}
+      - {id: ECAM_ND_XFR,  type: sel, pos: [CAPT, NORM, FO], def: NORM}
+
+    ecam_cp:
+      - {id: TO_CONFIG, type: pb_mom}
+      - {id: EMER_CANC, type: pb_mom}
+      - {id: SYS_PAGES, type: pb, lights: ["ON"],
+         keys: [ENG, BLEED, PRESS, ELEC, HYD, FUEL, APU, COND, DOOR, WHEEL, F_CTL, STS],
+         note: "solo una página a la vez; STS con luz propia"}
+      - {id: CLR_LEFT,  type: pb, lights: [CLR]}
+      - {id: CLR_RIGHT, type: pb, lights: [CLR]}
+      - {id: RCL, type: pb_mom}
+      - {id: ALL, type: pb_mom, note: "mantener = cicla todas las páginas"}
+      - {id: UPPER_DISPLAY_BRT, type: knob}
+      - {id: LOWER_DISPLAY_BRT, type: knob}
+
+    thrust:
+      - {id: THR_LEVER_1, type: lever, pos: [MAX_REV, REV_IDLE, IDLE, CL, FLX_MCT, TOGA], def: IDLE}
+      - {id: THR_LEVER_2, type: lever, pos: [MAX_REV, REV_IDLE, IDLE, CL, FLX_MCT, TOGA], def: IDLE}
+      - {id: REV_LATCH_1, type: sw, note: "levantar para REV con lever en IDLE"}
+      - {id: REV_LATCH_2, type: sw}
+      - {id: ATHR_DISC_1, type: pb_mom, note: "instinctive disconnect en lever"}
+      - {id: ATHR_DISC_2, type: pb_mom}
+
+    eng:
+      - {id: ENG_MASTER_1, type: sw, pos: ["ON", "OFF"], def: "OFF", lights: [FIRE, FAULT]}
+      - {id: ENG_MASTER_2, type: sw, pos: ["ON", "OFF"], def: "OFF", lights: [FIRE, FAULT]}
+      - {id: ENG_MODE_SEL, type: sel, pos: [CRANK, NORM, IGN_START], def: NORM}
+
+    surfaces:
+      - {id: SPD_BRK_LEVER, type: lever, pos: [RET, HALF, FULL], def: RET,
+         note: "pull up en RET = ARM ground spoilers"}
+      - {id: GND_SPLRS_ARMED, type: light}
+      - {id: FLAPS_LEVER, type: lever, pos: ["0", "1", "2", "3", FULL], def: "0"}
+      - {id: PITCH_TRIM_WHEEL_L, type: wheel}
+      - {id: PITCH_TRIM_WHEEL_R, type: wheel}
+      - {id: RUDDER_TRIM_KNOB,  type: sw, pos: [L, NEUTRAL, R], def: NEUTRAL, note: "spring-loaded"}
+      - {id: RUDDER_TRIM_RESET, type: pb_mom}
+      - {id: RUDDER_TRIM_IND,   type: gauge}
+
+    atc_tcas:
+      - {id: XPDR_CODE, type: gauge}
+      - {id: XPDR_KEYS, type: pb_mom, keys: ["0-7", CLR]}
+      - {id: XPDR_MODE, type: sel, pos: [STBY, AUTO, "ON"], def: STBY}
+      - {id: ALT_RPTG,  type: sw, pos: ["ON", "OFF"], def: "ON"}
+      - {id: XPDR_SYS,  type: sw, pos: ["1", "2"], def: "1"}
+      - {id: IDENT,     type: pb_mom}
+      - {id: TCAS_MODE, type: sel, pos: [STBY, TA, TA_RA], def: STBY}
+      - {id: TCAS_TRAFFIC, type: sel, pos: [THRT, ALL, ABV, BLW], def: ALL}
+
+    park_brake:
+      - {id: PARK_BRK, type: lever, pos: ["ON", "OFF"], def: "ON", note: "girar y tirar"}
+
+    gear_gravity:
+      - {id: GEAR_GRVTY_EXTN, type: lever, pos: [NORM, EXTN], def: NORM,
+         note: "manivela roja PULL & TURN x3 vueltas"}
+
+    aids_dfdr:
+      - {id: AIDS_PRINT, type: pb_mom}
+      - {id: DFDR_EVENT, type: pb_mom}
+
+    misc:
+      - {id: PRINTER, type: gauge, note: "slot de papel"}
+      - {id: DATA_LOADER_ACCESS, type: gauge, note: "puerta airborne data loader"}
+      - {id: HANDSET, type: gauge}
+
+    cockpit_door:
+      - {id: DOOR_SW, type: sw, pos: [UNLOCK, NORM, LOCK], def: NORM, note: "UNLOCK spring-loaded"}
+      - {id: DOOR_OPEN_LT,  type: light}
+      - {id: DOOR_FAULT_LT, type: light}
+      - {id: DOOR_VIDEO, type: pb_mom, note: "opcional"}
+
+    lighting:
+      - {id: FLOOD_LT_MAIN, type: knob}
+      - {id: FLOOD_LT_PED,  type: knob}
+      - {id: INTEG_LT_PED,  type: knob}
+
+  # ----------------------------------------------------------
+  other:
+    sidestick:                  # x2: CAPT y F/O
+      - {id: STICK, type: gauge, note: "pitch/roll -1..1"}
+      - {id: AP_DISC_TAKEOVER, type: pb_mom, note: "corto=AP off, mantener=priority"}
+      - {id: PTT, type: sw, pos: [TX, NEUTRAL], def: NEUTRAL}
+    tiller:                     # x2
+      - {id: TILLER, type: gauge, note: "-75..+75 grados NWS"}
+      - {id: PEDAL_DISC, type: pb_mom}
