@@ -198,6 +198,23 @@ El Rust de FBW **no modela consumo ni crossfeed**: los simvars `FUEL TANK * QUAN
 - **Catálogo**: grupo `Fuel`, dominio **World** entero (tanques con rango 0..capacidad, `unlimited_fuel`, bombas) — no hay pulsadores de fuel en el Rust del vendor, así que nada de esto es cabina.
 - **Muleta `UNLIMITED FUEL` retirada** de `_start_apu_running` (MCP), `generator_caution.rs`, `apu_slice.rs` y la demo de `main.rs`: el APU arranca con el fuel sembrado. El flag sigue catalogado (`unlimited_fuel`) por si un escenario futuro necesita explícitamente el caso ilimitado, pero ningún camino nuestro lo escribe (lo vigila `tests/fuel_slice.rs`).
 
+### D-019 — Motor propio: spool de N2 de primer orden (issue #58)
+**Fecha**: 2026-07-21 (Fase 4, slice 4)
+El Rust de FBW no modela el motor (el spool vive en el FADEC C++/WASM y en MSFS): los sistemas solo **leen** simvars de motor como entrada pura. Headless hay que generarlas, y se eligió un **modelo propio con spool de N2 de primer orden por tramos** (`core-rs/src/engine.rs`: `n2 += (target - n2)·(1 - e^(-dt/τ))`, determinista en función del `dt` del tick — nada de reloj de pared ni azar, requisito del benchmark). Timing resultante: arranque ~50 s hasta idle (58.5 % N2), spool-down ~49 s. Constantes y contrato completo en `docs/fase4-motor.md`.
+
+Alternativas rechazadas:
+- **Fijo-por-régimen** (escribir N2=58.5 al instante): el arranque ES el deliverable del slice, y saltar de 0 a idle no ejercitaría nada de lo que el vendor deriva del transitorio — la válvula de arranque (abre con `Starting` y N2 < 65 %, `a320_systems/src/pneumatic.rs:458-473`), el cruce de presión de aceite a 25 % de N2 (`fbw-common/.../engine/leap_engine.rs:67-68`), la lógica de PTU-inhibit con un solo master, o un fallo inyectado a mitad de arranque (Fase 5).
+- **JSBSim**: dependencia nativa pesada, riesgo de no-determinismo entre plataformas, y una fidelidad que nadie consume — el vendor solo lee estas pocas simvars; toda la interacción entre sistemas (lo que este proyecto evalúa) ya la pone FBW.
+
+### D-020 — Contrato de arranque de motores (issue #58)
+**Fecha**: 2026-07-21 (Fase 4, slice 4)
+Las dos mitades del contrato, verificadas contra los consumidores del vendor (rutas relativas a `core-rs/vendor/aircraft`):
+
+- **Inputs de cabina**: `ENG_MASTER_{1,2}` son LVARs **nuestros** — en MSFS el engine master vive en el fuel system C++ y ningún elemento del Rust del vendor lo registra; el runtime los siembra a 0 en `Runtime::new` (`ENGINE_CONTROL_SEED`). El selector de modo sí es del vendor: `TURB ENG IGNITION SWITCH EX1:1`, **un único selector para ambos motores**, leído por el FADEC de pneumatic (`a320_systems/src/pneumatic.rs:1608-1609`) con el enum `EngineModeSelector` CRANK=0/NORM=1/IGN-START=2 (`fbw-common/.../pneumatic/mod.rs:764-782`). Se siembra a **1 (NORM)**: sin seed, una var no escrita lee 0.0 = CRANK, que no es el reposo del panel real.
+- **`ENGINE_STATE:{n}` lo transicionamos nosotros**: nadie lo escribe en el Rust del vendor fuera de su test bed. Consumidores: el FADEC de pneumatic (`a320_systems/src/pneumatic.rs:1587-1650`, de donde sale la válvula de arranque) y el aire acondicionado (`a320_systems/src/air_conditioning.rs:1220-1221`). Se reutiliza el enum `EngineState` del vendor (Off=0/On=1/Starting=2/Restarting=3/Shutting=4, `fbw-common/.../pneumatic/mod.rs:507-528`) para que los valores no puedan divergir; `Restarting` no se produce (fuera de alcance).
+- **Outputs por motor y tick**: `ENGINE_N2:{n}` y `TURB ENG CORRECTED N1/N2:{n}` en percent, `TURB ENG JET THRUST:{n}` en libras (el framework lee `Ratio` como percent y `Mass` como pound, `fbw-common/.../simulation/mod.rs:774,781`; lector: `LeapEngine`, `leap_engine.rs:42-45,72-78`). Corrected = uncorrected (tierra, ISA).
+- **`GENERAL ENG STARTER ACTIVE:{n}` espeja el master, no el corte del starter**: su único lector Rust es el controlador del PTU y lo trata como *eng master on/off* (`a320_systems/src/hydraulic/mod.rs:3449-3452,3550-3554`; sus campos se llaman `eng_{n}_master_on`), y el test bed del vendor lo mantiene a 1 mientras el motor corre (`hydraulic/mod.rs:7145-7183`). El corte real del starter ya lo modela el vendor con la válvula de arranque a 65 % de N2, alimentada por nuestros `ENGINE_STATE`/`ENGINE_N2`. (El briefing del slice proponía cortarlo a 50 % durante `Starting`; se descartó con el vendor delante — habría roto la lógica de PTU-inhibit, que necesita ver el master, no el starter.)
+
 ## Hitos
 
 ### Fase 1 cerrada — 2026-07-15
