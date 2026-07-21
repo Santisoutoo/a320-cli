@@ -75,6 +75,8 @@ pub enum ControlGroup {
     Apu,
     /// Sistema de combustible.
     Fuel,
+    /// Motores (panel ENG: masters + selector de modo).
+    Eng,
     // Pneu... se añaden en fases posteriores.
 }
 
@@ -85,6 +87,7 @@ impl ControlGroup {
             ControlGroup::Hyd => "HYD",
             ControlGroup::Apu => "APU",
             ControlGroup::Fuel => "FUEL",
+            ControlGroup::Eng => "ENG",
         }
     }
 }
@@ -165,7 +168,8 @@ pub struct Control {
 }
 
 /// Catálogo curado. **Fase 1: panel eléctrico. Fase 4: panel hidráulico
-/// (slice 1) y panel APU (slice 2).**
+/// (slice 1), panel APU (slice 2), fuel como mundo (slice 3) y panel ENG
+/// (slice 4).**
 ///
 /// Los LVAR provienen del panel eléctrico superior de FBW
 /// (`a320_systems/src/electrical/mod.rs`, `A320ElectricalOverheadPanel::new`) y
@@ -420,6 +424,44 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Apu,
         domain: ControlDomain::Cockpit,
     },
+    // --- Panel ENG (Fase 4, slice 4) -----------------------------------------
+    //
+    // Los LVARs `ENG_MASTER_{1,2}` son NUESTROS, no del vendor: en MSFS el
+    // engine master vive en el fuel system C++ y ningún elemento del Rust del
+    // vendor lo registra — los lee nuestro `EngineModel` (`src/engine.rs`) y
+    // los siembra el runtime (`ENGINE_CONTROL_SEED`). Ver D-020. El selector de
+    // modo sí es del vendor: `TURB ENG IGNITION SWITCH EX1:1`, un único
+    // selector para ambos motores, leído por el FADEC de pneumatic
+    // (`a320_systems/src/pneumatic.rs:1608-1609`) con el enum
+    // `EngineModeSelector` 0=CRANK / 1=NORM / 2=IGN-START
+    // (`fbw-common/.../pneumatic/mod.rs:764-782`).
+    Control {
+        name: "eng_master_1",
+        lvar: "ENG_MASTER_1",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 1 master lever (our LVAR, not the vendor's): 1 = ON (starts with mode selector at IGN/START; keeps the engine running), 0 = OFF (shuts the engine down)",
+        group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "eng_master_2",
+        lvar: "ENG_MASTER_2",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 2 master lever (our LVAR, not the vendor's): 1 = ON (starts with mode selector at IGN/START; keeps the engine running), 0 = OFF (shuts the engine down)",
+        group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "eng_mode",
+        lvar: "TURB ENG IGNITION SWITCH EX1:1",
+        kind: ControlKind::Enum,
+        valid: ValidValues::Enum(&[0.0, 1.0, 2.0]),
+        description: "Engine mode selector, one rotary selector for both engines: 0 = CRANK, 1 = NORM (rest position), 2 = IGN/START (arms the start when a master goes ON)",
+        group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
     // --- Fuel como estado de mundo (Fase 4, slice 3) -------------------------
     Control {
         name: "fuel_tank_center",
@@ -597,6 +639,21 @@ mod tests {
             assert_eq!(c.group, ControlGroup::Apu, "'{name}' debería ser APU");
             assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
         }
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_engine_panel() {
+        // Los controles que el issue #58 (slice 4) exige para el panel ENG.
+        for name in ["eng_master_1", "eng_master_2", "eng_mode"] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Eng, "'{name}' debería ser ENG");
+            assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
+        }
+        // El selector real del vendor (un solo selector para ambos motores) y
+        // sus tres posiciones exactas: CRANK=0 / NORM=1 / IGN-START=2.
+        let mode = by_name("eng_mode").unwrap();
+        assert_eq!(mode.lvar, "TURB ENG IGNITION SWITCH EX1:1");
+        assert_eq!(mode.valid, ValidValues::Enum(&[0.0, 1.0, 2.0]));
     }
 
     #[test]

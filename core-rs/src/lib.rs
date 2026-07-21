@@ -8,6 +8,7 @@
 //! Módulos:
 //! - [`variables`]: registro de variables + reader/writer persistentes.
 //! - [`environment`]: borde con el "mundo" (tabla de simvars de `UpdateContext`).
+//! - [`engine`]: modelo de motor propio (máquina de estados + spool de N2).
 //! - [`runtime`]: runtime persistente (tick loop) sobre `Simulation<A320>`.
 //! - [`controls`]: catálogo curado de controles accionables (`list_controls`).
 //! - [`failures`]: catálogo curado de fallos inyectables (`list_failures`).
@@ -17,6 +18,7 @@
 pub mod api;
 pub mod controls;
 pub mod ecam;
+pub mod engine;
 pub mod environment;
 pub mod failures;
 pub mod runtime;
