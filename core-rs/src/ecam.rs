@@ -348,6 +348,36 @@ pub const CATALOG: &[EcamRule] = &[
         source: EcamSource::VendorFlag,
         trigger: Trigger::Flag("HYD_PTU_ON_ECAM_MEMO"),
     },
+    // --- APU (Fase 4, slice 2) ------------------------------------------------
+    //
+    // El wording "APU FAULT" (y no "APU MASTER FAULT") es el de la caution ECAM
+    // real del A320: la luz FAULT del MASTER SW acompaña a un auto-shutdown del
+    // APU, y lo que la E/WD muestra es "APU FAULT". El flag lo calcula FBW: el
+    // ECB propaga su fault al pulsador (`fbw-common/.../systems/src/apu/mod.rs:371`,
+    // `self.master.set_fault(apu.has_fault())`) y hoy lo levantan dos causas —
+    // pérdida de presión de combustible con el APU girando
+    // (`electronic_control_box.rs:224-230`, `ApuFault::FuelLowPressure`) y el
+    // fire button soltado (`electronic_control_box.rs:150-152`, `ApuFault::ApuFire`).
+    EcamRule {
+        id: "apu.master.fault",
+        message: "APU FAULT",
+        severity: Severity::Caution,
+        system: FailureGroup::Apu,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("OVHD_APU_MASTER_SW_PB_HAS_FAULT"),
+    },
+    // Memo verde AVAIL: el ECB declara el APU disponible con N>95% sostenido 2 s
+    // (o N>99.5%) y sin fault ni cooldown (`electronic_control_box.rs:328-337`);
+    // el pulsador START lo refleja en su LVAR (`apu/mod.rs:361`,
+    // `self.start.set_available(apu.is_available())`).
+    EcamRule {
+        id: "apu.avail",
+        message: "APU AVAIL",
+        severity: Severity::Advisory,
+        system: FailureGroup::Apu,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("OVHD_APU_START_PB_IS_AVAILABLE"),
+    },
 ];
 
 fn is_set(store: &VariableStore, name: &str) -> bool {
@@ -446,6 +476,7 @@ mod tests {
             let expected_prefix = match r.system {
                 FailureGroup::Elec => "elec.",
                 FailureGroup::Hyd => "hyd.",
+                FailureGroup::Apu => "apu.",
             };
             assert!(
                 r.id.starts_with(expected_prefix),
@@ -476,6 +507,18 @@ mod tests {
         // El memo es informativo, no una caution.
         let memo = CATALOG.iter().find(|r| r.id == "hyd.ptu.memo").unwrap();
         assert_eq!(memo.severity, Severity::Advisory);
+    }
+
+    #[test]
+    fn apu_rules_cover_the_phase4_slice() {
+        // Las dos reglas que el issue #56 (slice 2) exige para el APU.
+        let fault = CATALOG.iter().find(|r| r.id == "apu.master.fault").unwrap();
+        assert_eq!(fault.severity, Severity::Caution);
+        assert_eq!(fault.source, EcamSource::VendorFlag);
+
+        let avail = CATALOG.iter().find(|r| r.id == "apu.avail").unwrap();
+        assert_eq!(avail.severity, Severity::Advisory);
+        assert_eq!(avail.source, EcamSource::VendorFlag);
     }
 
     /// El RAT & EMER GEN queda fuera a propósito: su condición exige

@@ -310,9 +310,10 @@ def _start_apu_running(sim: "a320_sim.Sim") -> None:
     sim.set("bat_2", 1)
     sim.run(3.0, 5.0)
 
-    sim.set("OVHD_APU_MASTER_SW_PB_IS_ON", 1)
+    # Catalog names since Phase 4 slice 2 (#56); raw LVARs no longer needed.
+    sim.set("apu_master", 1)
     sim.run(1.0, 5.0)
-    sim.set("OVHD_APU_START_PB_IS_ON", 1)
+    sim.set("apu_start", 1)
 
     # Bounded wait, not a blind sleep: the APS3200 reaches available at ~62 s.
     elapsed = 0
