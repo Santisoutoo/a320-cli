@@ -51,6 +51,35 @@ use systems::simulation::{Simulation, StartState};
 use crate::environment::Environment;
 use crate::variables::VariableStore;
 
+/// Carga de combustible por defecto, en **galones US** por tanque.
+///
+/// El Rust de FBW no modela consumo ni crossfeed: los simvars
+/// `FUEL TANK * QUANTITY` son *entradas* de mundo en galones que `FuelTank::read`
+/// convierte a kg multiplicando por `FUEL_GALLONS_TO_KG = 3.039075693483925`
+/// (`fbw-common/.../systems/src/fuel/mod.rs:12` y `:97-100`). Los nombres y
+/// capacidades salen de `A320_FUEL`
+/// (`a320_systems/src/fuel/mod.rs:53-79`): center 2179 gal, mains 1816 gal,
+/// aux 228 gal.
+///
+/// **Criterio del reparto** (~6 400 kg, una carga de bloque realista de corto
+/// radio): el repostaje real del A320 llena las alas antes que el central —
+/// células aux (outer) llenas, el resto a partes iguales en los mains, center
+/// vacío. 2 × 228 + 2 × 825 = 2 106 gal ≈ 6 400 kg. El APU bebe del tanque
+/// **left main** (`a320_systems/src/lib.rs:171` →
+/// `left_inner_tank_has_fuel_remaining()`, `fuel/mod.rs:134-137`), que queda
+/// bien servido con 825 gal.
+///
+/// Es un **seed, no entorno**: se escribe UNA vez en [`Runtime::new`] (antes
+/// del tick de inicialización) y ningún tick lo reescribe — un escenario puede
+/// vaciar un tanque con `set` y el runtime no se lo machaca.
+const FUEL_SEED_GALLONS: &[(&str, f64)] = &[
+    ("FUEL TANK CENTER QUANTITY", 0.0),
+    ("FUEL TANK LEFT MAIN QUANTITY", 825.0),
+    ("FUEL TANK LEFT AUX QUANTITY", 228.0),
+    ("FUEL TANK RIGHT MAIN QUANTITY", 825.0),
+    ("FUEL TANK RIGHT AUX QUANTITY", 228.0),
+];
+
 /// Runtime persistente del A320 headless.
 ///
 /// Instancia el avión una sola vez y lo tica repetidamente; el estado (y el
@@ -96,6 +125,13 @@ impl Runtime {
         // Deja el store en un estado de mundo válido ya antes del primer tick
         // (p. ej. para leer variables sin haber ticado todavía).
         runtime.environment.write_all(&mut runtime.store);
+        // Siembra el combustible ANTES del tick de inicialización, para que el
+        // primer estado observable (y la primera `read_ecam`) ya sea el de un
+        // avión con su carga por defecto. Una sola escritura, ver el doc de
+        // `FUEL_SEED_GALLONS`.
+        for &(tank, gallons) in FUEL_SEED_GALLONS {
+            runtime.store.write_by_name(tank, gallons);
+        }
         // Tick de inicialización con los controles en su default (todo OFF) para
         // que las máquinas de estado internas del avión —que no viven en el store
         // y no son sembrables (D-007)— arranquen en su estado coherente antes de
@@ -386,6 +422,29 @@ mod tests {
             (rt.sim_time() - 2.0).abs() < 1e-9,
             "sim_time = {}",
             rt.sim_time()
+        );
+    }
+
+    /// El combustible es un seed, no entorno: `Runtime::new` lo escribe una vez
+    /// y el tick NO lo reasienta — vaciar un tanque debe sobrevivir a los ticks
+    /// (si el entorno lo reescribiese cada tick, ningún escenario de fuel sería
+    /// montable).
+    #[test]
+    fn fuel_seed_is_written_once_and_ticks_do_not_reassert_it() {
+        let mut rt = Runtime::apron_cold_and_dark();
+
+        // El seed es legible ya, sin ningún tick del caller.
+        assert_eq!(rt.read_by_name("FUEL TANK LEFT MAIN QUANTITY"), 825.0);
+        assert_eq!(rt.read_by_name("FUEL TANK LEFT AUX QUANTITY"), 228.0);
+        assert_eq!(rt.read_by_name("FUEL TANK CENTER QUANTITY"), 0.0);
+
+        // Vaciar un tanque persiste entre ticks: nadie lo machaca.
+        rt.write_by_name("FUEL TANK LEFT MAIN QUANTITY", 0.0);
+        rt.run(2.0, 5.0);
+        assert_eq!(
+            rt.read_by_name("FUEL TANK LEFT MAIN QUANTITY"),
+            0.0,
+            "el tick no debe reasentar el seed de combustible"
         );
     }
 
