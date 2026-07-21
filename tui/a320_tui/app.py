@@ -25,6 +25,7 @@ from a320_tui.cockpit_state import CockpitRegistry
 from a320_tui.commands import EmbeddedRepl
 from a320_tui.controller import CockpitController
 from a320_tui.layouts.overhead import OVERHEAD_ZONE
+from a320_tui.layouts.pedestal import PEDESTAL_ZONE
 from a320_tui.model import load_model
 from a320_tui.sim_bridge import SimBridge
 from a320_tui.state import SimState
@@ -75,7 +76,7 @@ class A320TuiApp(App):
             with Quadrant("GLARESHIELD · MAIN PANEL [F2]", id="q-glare-main"):
                 yield Label("glareshield + main panel — pending", classes="pending")
             with Quadrant("PEDESTAL [F3]", id="q-pedestal"):
-                yield Label("pedestal — pending", classes="pending")
+                yield ZonePanel(PEDESTAL_ZONE, self.controller)
             with Quadrant("ELEC SD · E/WD [F4]", id="q-observe"):
                 yield ElecSynoptic()
                 yield EwdPanel(self.bridge.failure_catalog)

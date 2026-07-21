@@ -11,9 +11,13 @@ import pytest
 
 from a320_tui.layouts import zone_slot_ids
 from a320_tui.layouts.overhead import OVERHEAD_ZONE
+from a320_tui.layouts.pedestal import PEDESTAL_ZONE
 from a320_tui.model import load_model
 
-ZONES = [OVERHEAD_ZONE]
+ZONES = [OVERHEAD_ZONE, PEDESTAL_ZONE]
+
+# Panels whose zone layout has landed; grows until it covers the model.
+COVERED_PANELS = {"overhead_aft", "overhead_fwd", "pedestal"}
 
 
 @pytest.fixture(scope="module")
@@ -39,14 +43,12 @@ def test_every_slot_is_a_real_model_control(model):
     assert unknown == []
 
 
-def test_overhead_places_every_overhead_control_plus_rmp3_acp3(model):
-    # The overhead quadrant owns both overhead panels and, per the YAML's
-    # rmp3_acp3 placement note, the third RMP/ACP instances.
-    expected = {
-        c.id
-        for c in model.controls
-        if c.panel in ("overhead_aft", "overhead_fwd")
-        or c.id.startswith(("RMP_3.", "ACP_3."))
-    }
-    placed = set(zone_slot_ids(OVERHEAD_ZONE, model))
-    assert placed == expected
+def test_the_zones_cover_every_control_of_their_panels(model):
+    # RMP_3/ACP_3 belong to the pedestal panel in the YAML but are placed
+    # on the overhead (the rmp3_acp3 note); coverage is asserted globally.
+    expected = {c.id for c in model.controls if c.panel in COVERED_PANELS}
+    placed = set(_all_placed(model))
+    missing = expected - placed
+    stray = placed - expected
+    assert missing == set(), f"controls lost by the layouts: {sorted(missing)}"
+    assert stray == set(), f"placed but outside covered panels: {sorted(stray)}"
