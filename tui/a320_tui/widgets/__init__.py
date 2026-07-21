@@ -10,7 +10,6 @@ from a320_tui.widgets.guarded_button import GuardedButton
 from a320_tui.widgets.key_group import KeyGroup
 from a320_tui.widgets.korry_button import KorryButton
 from a320_tui.widgets.lever import Lever
-from a320_tui.widgets.overhead_panel import OverheadPanel
 from a320_tui.widgets.rotary import Knob, KnobPushPull, RotarySelector
 from a320_tui.widgets.status_bar import StatusBar
 from a320_tui.widgets.switch import ToggleSwitch
@@ -30,7 +29,6 @@ __all__ = [
     "Lever",
     "LightAnnunciator",
     "LocalKorry",
-    "OverheadPanel",
     "RotarySelector",
     "StatusBar",
     "ToggleSwitch",

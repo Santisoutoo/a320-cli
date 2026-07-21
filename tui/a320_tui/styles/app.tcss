@@ -1,9 +1,8 @@
-#main {
+#cockpit {
     height: 1fr;
-}
-
-#right {
-    width: 1fr;
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 1fr 1fr;
 }
 
 #cmdline {
@@ -19,4 +18,14 @@
 
 #cmdinput {
     dock: bottom;
+}
+
+.pending {
+    color: $text-muted;
+    padding: 1 2;
+}
+
+.section {
+    color: $text-muted;
+    margin: 1 0 0 0;
 }

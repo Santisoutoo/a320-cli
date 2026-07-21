@@ -8,8 +8,8 @@ selective ``get`` — never ``snapshot()``, which builds a dict of hundreds
 of vars per call.
 
 ``BUTTON_OVERLAYS``/``EXTRA_PANEL_SPECS`` are compatibility views of the
-wiring keyed the way the 35VU geometry consumes them (catalog friendly
-name / legacy extra name); they disappear with the geometry switchover.
+wiring keyed by catalog friendly name / legacy extra name; the zone
+layouts themselves consume ``WIRING`` directly (see ``widgets/zone_panel``).
 """
 
 from __future__ import annotations
@@ -21,10 +21,6 @@ __all__ = [
     "BUTTON_OVERLAYS",
     "ButtonSpec",
     "EXTRA_PANEL_SPECS",
-    "PANEL_LEFT_STACK",
-    "PANEL_SOURCES_ROW",
-    "PANEL_TOP_ROW",
-    "PLACED_CONTROLS",
     "SYNOPTIC_VARS",
     "button_specs",
     "manifest_vars",
@@ -49,33 +45,6 @@ EXTRA_PANEL_SPECS: dict[str, ButtonSpec] = {
 
 # The battery voltmeters between the BAT pushbuttons (live on the real panel).
 BAT_DISPLAY_VARS = ["ELEC_BAT_1_POTENTIAL", "ELEC_BAT_2_POTENTIAL"]
-
-
-# The 35VU ELEC panel geometry, as rows of slot names. Transcribed from the
-# A32NX overhead reference (docs.flybywiresim.com, ELEC-Panel.jpg — used as a
-# *reference*, not committed as an asset: the repo is GPLv3 and terminal cells
-# can't render a photo anyway). Slot kinds:
-#   catalog:<name>  a curated-catalog control (BUTTON_OVERLAYS)
-#   extra:<name>    FBW-modeled hardware outside the catalog (EXTRA_PANEL_SPECS)
-#   bat_display:<n> live voltmeter
-#   prop:<legend>   real-panel position FBW does not model (inert)
-PANEL_TOP_ROW = [
-    "bat_display:1", "catalog:bat_1", "catalog:bat_2", "bat_display:2",
-    "extra:ac_ess_feed",
-]
-PANEL_LEFT_STACK = ["extra:commercial", "extra:galy_and_cab"]
-PANEL_SOURCES_ROW = [
-    "prop:IDG 1", "catalog:gen_1", "catalog:apu_gen", "catalog:bus_tie",
-    "catalog:ext_pwr", "catalog:gen_2", "prop:IDG 2",
-]
-
-# Every catalog control the fixed geometry places. Anything else the catalog
-# grows (Phase 4...) lands in an OTHER section instead of silently dropping.
-PLACED_CONTROLS = {
-    slot.split(":", 1)[1]
-    for slot in PANEL_TOP_ROW + PANEL_SOURCES_ROW
-    if slot.startswith("catalog:")
-}
 
 
 def button_specs(controls: list[dict]) -> list[ButtonSpec]:
