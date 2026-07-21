@@ -48,6 +48,7 @@ use rustc_hash::FxHashSet;
 use systems::failures::FailureType;
 use systems::simulation::{Simulation, StartState};
 
+use crate::engine::{EngineModel, MODE_SELECTOR_LVAR};
 use crate::environment::Environment;
 use crate::variables::VariableStore;
 
@@ -80,6 +81,25 @@ const FUEL_SEED_GALLONS: &[(&str, f64)] = &[
     ("FUEL TANK RIGHT AUX QUANTITY", 228.0),
 ];
 
+/// Seed de los controles de motor, escrito UNA vez en [`Runtime::new`] (mismo
+/// patrón que [`FUEL_SEED_GALLONS`]: los ticks no lo reasientan).
+///
+/// - `ENG_MASTER_{1,2}` son LVARs **nuestros** (D-020): en MSFS el engine
+///   master vive en el fuel system C++ y ningún elemento del Rust del vendor
+///   lo registra. Sembrarlos a 0 (OFF) los deja registrados desde el arranque
+///   (los exige `every_catalog_lvar_is_registered_after_a_tick`) y en el estado
+///   cold & dark correcto.
+/// - El selector de modo (`TURB ENG IGNITION SWITCH EX1:1`) descansa en
+///   **NORM = 1** en el panel real, pero nadie lo escribe en el Rust del
+///   vendor y el default de una var no escrita es 0.0 = **CRANK**
+///   (`EngineModeSelector`, `fbw-common/.../pneumatic/mod.rs:764-782`). Sin
+///   este seed, el FADEC de pneumatic leería CRANK para siempre.
+const ENGINE_CONTROL_SEED: &[(&str, f64)] = &[
+    ("ENG_MASTER_1", 0.0),
+    ("ENG_MASTER_2", 0.0),
+    (MODE_SELECTOR_LVAR, 1.0),
+];
+
 /// Runtime persistente del A320 headless.
 ///
 /// Instancia el avión una sola vez y lo tica repetidamente; el estado (y el
@@ -91,6 +111,9 @@ pub struct Runtime {
     store: VariableStore,
     /// Estado del mundo exterior; se escribe entero en el store cada tick.
     environment: Environment,
+    /// Modelos de motor propios (D-019): generan por tick los simvars de motor
+    /// que el vendor lee como entrada pura (N1/N2/estado/empuje/starter).
+    engines: [EngineModel; 2],
     /// Tiempo de simulación acumulado, en segundos. Monótono creciente.
     sim_time: f64,
     start_state: StartState,
@@ -118,6 +141,7 @@ impl Runtime {
             simulation,
             store,
             environment,
+            engines: [EngineModel::new(1), EngineModel::new(2)],
             sim_time: 0.0,
             start_state,
             active_failures: FxHashSet::default(),
@@ -131,6 +155,13 @@ impl Runtime {
         // `FUEL_SEED_GALLONS`.
         for &(tank, gallons) in FUEL_SEED_GALLONS {
             runtime.store.write_by_name(tank, gallons);
+        }
+        // Siembra los controles de motor (masters OFF, selector en NORM) por
+        // los motivos del doc de `ENGINE_CONTROL_SEED`. Una sola escritura: son
+        // controles de cabina y los ticks no deben machacar lo que el caller
+        // escriba después.
+        for &(name, value) in ENGINE_CONTROL_SEED {
+            runtime.store.write_by_name(name, value);
         }
         // Tick de inicialización con los controles en su default (todo OFF) para
         // que las máquinas de estado internas del avión —que no viven en el store
@@ -236,12 +267,17 @@ impl Runtime {
 
     /// Ejecuta un único tick de duración `delta`.
     ///
-    /// Orden (nota de diseño): escribir la tabla completa de mundo →
-    /// `simulation.tick` → avanzar el reloj. Las escrituras de control ya viven
-    /// en el store; el entorno se reescribe entero cada tick porque
-    /// `UpdateContext` lo relee cada tick.
+    /// Orden (nota de diseño): escribir la tabla completa de mundo → actualizar
+    /// los modelos de motor → reenviar fallos → `simulation.tick` → avanzar el
+    /// reloj. Las escrituras de control ya viven en el store; el entorno se
+    /// reescribe entero cada tick porque `UpdateContext` lo relee cada tick.
+    /// Los motores van **antes** de `simulation.tick` para que el avión lea en
+    /// este mismo tick el N1/N2/estado que acaban de generar.
     fn tick(&mut self, delta: Duration) {
         self.environment.write_all(&mut self.store);
+        for engine in &mut self.engines {
+            engine.update(delta, &mut self.store);
+        }
         // Los fallos van por su propio canal (no por el store) y el contrato es
         // declarativo: se reenvía el conjunto entero. Hacerlo aquí —y no solo al
         // mutar el set— vuelve irrelevante el orden inyectar-antes-de-ticar, que
