@@ -24,6 +24,8 @@ from textual.widgets import Footer, Input, Label, RichLog
 from a320_tui.cockpit_state import CockpitRegistry
 from a320_tui.commands import EmbeddedRepl
 from a320_tui.controller import CockpitController
+from a320_tui.layouts.glareshield import GLARESHIELD_ZONE
+from a320_tui.layouts.main_panel import MAIN_PANEL_ZONE
 from a320_tui.layouts.overhead import OVERHEAD_ZONE
 from a320_tui.layouts.pedestal import PEDESTAL_ZONE
 from a320_tui.model import load_model
@@ -74,7 +76,8 @@ class A320TuiApp(App):
             with Quadrant("OVERHEAD [F1]", id="q-overhead"):
                 yield ZonePanel(OVERHEAD_ZONE, self.controller)
             with Quadrant("GLARESHIELD · MAIN PANEL [F2]", id="q-glare-main"):
-                yield Label("glareshield + main panel — pending", classes="pending")
+                yield ZonePanel(GLARESHIELD_ZONE, self.controller)
+                yield ZonePanel(MAIN_PANEL_ZONE, self.controller)
             with Quadrant("PEDESTAL [F3]", id="q-pedestal"):
                 yield ZonePanel(PEDESTAL_ZONE, self.controller)
             with Quadrant("ELEC SD · E/WD [F4]", id="q-observe"):
