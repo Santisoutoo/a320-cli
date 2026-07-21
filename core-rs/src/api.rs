@@ -375,10 +375,13 @@ mod tests {
         let controls = sim.list_controls();
         assert!(!controls.is_empty());
         assert!(controls.iter().any(|c| c.name == "bat_1"));
-        // Todos los de Fase 1 son del grupo eléctrico.
+        // Fase 1 aportó el grupo eléctrico; Fase 4 (slice 1), el hidráulico.
         assert!(controls
             .iter()
-            .all(|c| c.group == crate::controls::ControlGroup::Elec));
+            .any(|c| c.group == crate::controls::ControlGroup::Elec));
+        assert!(controls
+            .iter()
+            .any(|c| c.group == crate::controls::ControlGroup::Hyd));
     }
 
     #[test]
@@ -449,10 +452,12 @@ mod tests {
         let fs = sim.list_failures();
         assert!(!fs.is_empty());
         assert!(fs.iter().any(|f| f.id == "elec.tr.1"));
-        // Todos los de Fase 2 son del grupo eléctrico.
+        // Fase 2 aportó el grupo eléctrico; Fase 4 (slice 1), el hidráulico.
         assert!(fs
             .iter()
-            .all(|f| f.group == crate::failures::FailureGroup::Elec));
+            .any(|f| f.group == crate::failures::FailureGroup::Elec));
+        assert!(fs.iter().any(|f| f.id == "hyd.reservoir_leak.yellow"
+            && f.group == crate::failures::FailureGroup::Hyd));
     }
 
     #[test]
@@ -481,6 +486,12 @@ mod tests {
     /// Lleva el avión a red AC completa con ext pwr (helper de los tests ECAM).
     fn powered_network() -> Sim {
         let mut sim = Sim::new();
+        // El pulsador de la bomba amarilla es AUTO/ON **invertido** y sin
+        // seeding (D-007) su LVAR lee 0 = ON: en cuanto la red AC cobra vida la
+        // bomba arrancaría y metería transitorios hidráulicos (LO PR, fault de
+        // bomba) en un escenario eléctrico. Se aparca en AUTO, que es además su
+        // posición real de cold & dark.
+        sim.set("hyd_epump_yellow", 1.0).unwrap();
         sim.set(BAT_1, 1.0).unwrap();
         sim.set(BAT_2, 1.0).unwrap();
         sim.set("bus_tie", 1.0).unwrap();

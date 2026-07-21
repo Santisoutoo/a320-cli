@@ -85,6 +85,35 @@ impl EcamSource {
     }
 }
 
+/// Una condición elemental sobre el store (para los gates compuestos).
+#[derive(Debug, Clone, Copy)]
+enum Cond {
+    /// El LVAR es distinto de 0.
+    Set(&'static str),
+    /// El LVAR es exactamente 0 (para pulsadores de semántica invertida, como
+    /// el AUTO/ON de la bomba amarilla: 0 = ON).
+    Clear(&'static str),
+    /// El LVAR supera un umbral (para "el circuito aguas arriba está
+    /// presurizado", que no es booleano).
+    Above(&'static str, f64),
+}
+
+impl Cond {
+    fn holds(&self, store: &VariableStore) -> bool {
+        match self {
+            Cond::Set(lvar) => is_set(store, lvar),
+            Cond::Clear(lvar) => !is_set(store, lvar),
+            Cond::Above(lvar, threshold) => store.peek_by_name(lvar) > *threshold,
+        }
+    }
+
+    fn lvar(&self) -> &'static str {
+        match self {
+            Cond::Set(lvar) | Cond::Clear(lvar) | Cond::Above(lvar, _) => lvar,
+        }
+    }
+}
+
 /// Cómo se decide si una regla está activa.
 #[derive(Debug, Clone, Copy)]
 enum Trigger {
@@ -99,6 +128,19 @@ enum Trigger {
     TrFaultWithAcAlive {
         potential_normal: &'static str,
         ac_bus_powered: &'static str,
+    },
+    /// Presión de circuito por debajo de un umbral **mientras la fuente de
+    /// presión del circuito está comandada** (todas las `enable` se cumplen).
+    ///
+    /// Mismo motivo que el gate de los TR: en cold & dark las tres presiones
+    /// hidráulicas valen 0 sin que nada esté roto — un circuito sin bomba
+    /// comandada no está averiado, está apagado. Solo cuando algo *debería*
+    /// estar presurizando (bomba eléctrica ON con AC vivo, PTU en AUTO con el
+    /// otro circuito presurizado) una presión baja es un LO PR de verdad.
+    PressureBelowWhileAll {
+        pressure: &'static str,
+        threshold_psi: f64,
+        enable: &'static [Cond],
     },
 }
 
@@ -130,7 +172,8 @@ pub struct Warning {
 /// Buses que alimentan la ECAM. Si ninguno está vivo, no hay pantalla que mirar.
 const ECAM_POWER_BUSES: &[&str] = &["ELEC_AC_ESS_BUS_IS_POWERED", "ELEC_DC_ESS_BUS_IS_POWERED"];
 
-/// Catálogo de reglas. **Fase 2: eléctrico, y solo lo alcanzable.**
+/// Catálogo de reglas. **Fase 2: eléctrico. Fase 4 slice 1: hidráulico. Solo lo
+/// alcanzable.**
 ///
 /// Queda deliberadamente fuera el RAT & EMER GEN FAULT
 /// (`OVHD_EMER_ELEC_RAT_AND_EMER_GEN_PB_HAS_FAULT`): su condición exige
@@ -196,6 +239,115 @@ pub const CATALOG: &[EcamRule] = &[
             ac_bus_powered: "ELEC_AC_2_BUS_IS_POWERED",
         },
     },
+    // --- Hidráulico (Fase 4, slice 1) ----------------------------------------
+    //
+    // Faults de bomba: la luz FAULT del pulsador la calcula FBW (agrega presión
+    // baja, presión de aire del reservorio baja, nivel bajo y overheat), así que
+    // son VendorFlag. El mensaje es genérico ("... PUMP FAULT") a propósito: el
+    // flag no distingue la causa.
+    EcamRule {
+        id: "hyd.eng_1_pump.fault",
+        message: "HYD ENG 1 PUMP FAULT",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("OVHD_HYD_ENG_1_PUMP_PB_HAS_FAULT"),
+    },
+    EcamRule {
+        id: "hyd.eng_2_pump.fault",
+        message: "HYD ENG 2 PUMP FAULT",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("OVHD_HYD_ENG_2_PUMP_PB_HAS_FAULT"),
+    },
+    EcamRule {
+        id: "hyd.epump_b.fault",
+        message: "HYD B ELEC PUMP FAULT",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("OVHD_HYD_EPUMPB_PB_HAS_FAULT"),
+    },
+    EcamRule {
+        id: "hyd.epump_y.fault",
+        message: "HYD Y ELEC PUMP FAULT",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("OVHD_HYD_EPUMPY_PB_HAS_FAULT"),
+    },
+    // LO PR derivados: FBW no expone un flag "SYS LO PR" a nivel de circuito,
+    // así que la regla es nuestra sobre la presión de la system section, con el
+    // gate de "fuente comandada" (ver `Trigger::PressureBelowWhileAll`). El
+    // umbral de 1450 psi es el del propio vendor (histéresis baja del low press
+    // switch, hydraulic/mod.rs:3262). **Alcance slice 1 (sin motores)**: las
+    // fuentes catalogadas son las alcanzables en tierra — bombas eléctricas y
+    // PTU; los caminos por EDP llegan con los motores (slice 4).
+    EcamRule {
+        id: "hyd.g.lo_pr",
+        message: "HYD G SYS LO PR",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::Derived,
+        trigger: Trigger::PressureBelowWhileAll {
+            pressure: "HYD_GREEN_SYSTEM_1_SECTION_PRESSURE",
+            threshold_psi: 1450.0,
+            // Sin motores, lo único que presuriza el verde es el PTU: comandado
+            // en AUTO y con el amarillo presurizado del que transferir.
+            enable: &[
+                Cond::Set("OVHD_HYD_PTU_PB_IS_AUTO"),
+                Cond::Above("HYD_YELLOW_SYSTEM_1_SECTION_PRESSURE", 1450.0),
+            ],
+        },
+    },
+    EcamRule {
+        id: "hyd.b.lo_pr",
+        message: "HYD B SYS LO PR",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::Derived,
+        trigger: Trigger::PressureBelowWhileAll {
+            pressure: "HYD_BLUE_SYSTEM_1_SECTION_PRESSURE",
+            threshold_psi: 1450.0,
+            // En tierra la bomba azul solo bombea con el pulsador en AUTO, el
+            // override del panel de mantenimiento activo y su bus AC 1 vivo
+            // (hydraulic/mod.rs:3134-3142; el camino de vuelo/motores es slice 4).
+            enable: &[
+                Cond::Set("OVHD_HYD_EPUMPB_PB_IS_AUTO"),
+                Cond::Set("OVHD_HYD_EPUMPY_OVRD_IS_ON"),
+                Cond::Set("ELEC_AC_1_BUS_IS_POWERED"),
+            ],
+        },
+    },
+    EcamRule {
+        id: "hyd.y.lo_pr",
+        message: "HYD Y SYS LO PR",
+        severity: Severity::Caution,
+        system: FailureGroup::Hyd,
+        source: EcamSource::Derived,
+        trigger: Trigger::PressureBelowWhileAll {
+            pressure: "HYD_YELLOW_SYSTEM_1_SECTION_PRESSURE",
+            threshold_psi: 1450.0,
+            // La bomba amarilla es AUTO/ON invertida: comandada cuando el
+            // pulsador NO está en AUTO (0 = ON) y su bus de alimentación (AC
+            // GND/FLT SVC) está vivo (hydraulic/mod.rs:3310-3312, :1597).
+            enable: &[
+                Cond::Clear("OVHD_HYD_EPUMPY_PB_IS_AUTO"),
+                Cond::Set("ELEC_AC_GND_FLT_SVC_BUS_IS_POWERED"),
+            ],
+        },
+    },
+    // Memo del PTU: la lógica es del vendor entera ("Actual logic of HYD PTU
+    // memo computed here until done within FWS", hydraulic/mod.rs:2609-2641).
+    EcamRule {
+        id: "hyd.ptu.memo",
+        message: "HYD PTU",
+        severity: Severity::Advisory,
+        system: FailureGroup::Hyd,
+        source: EcamSource::VendorFlag,
+        trigger: Trigger::Flag("HYD_PTU_ON_ECAM_MEMO"),
+    },
 ];
 
 fn is_set(store: &VariableStore, name: &str) -> bool {
@@ -215,6 +367,14 @@ impl EcamRule {
                 potential_normal,
                 ac_bus_powered,
             } => is_set(store, ac_bus_powered) && !is_set(store, potential_normal),
+            Trigger::PressureBelowWhileAll {
+                pressure,
+                threshold_psi,
+                enable,
+            } => {
+                store.peek_by_name(pressure) < threshold_psi
+                    && enable.iter().all(|cond| cond.holds(store))
+            }
         }
     }
 
@@ -226,6 +386,11 @@ impl EcamRule {
                 potential_normal,
                 ac_bus_powered,
             } => vec![potential_normal, ac_bus_powered],
+            Trigger::PressureBelowWhileAll {
+                pressure, enable, ..
+            } => std::iter::once(pressure)
+                .chain(enable.iter().map(Cond::lvar))
+                .collect(),
         }
     }
 }
@@ -273,9 +438,44 @@ mod tests {
         assert!(Severity::Caution < Severity::Advisory);
     }
 
+    /// El prefijo del id y el sistema declarado deben coincidir (mismo motivo
+    /// que en el catálogo de fallos: el agrupado de CLI/MCP depende de ello).
     #[test]
-    fn phase2_rules_are_all_electrical() {
-        assert!(CATALOG.iter().all(|r| r.system == FailureGroup::Elec));
+    fn rule_id_prefix_matches_the_declared_system() {
+        for r in CATALOG {
+            let expected_prefix = match r.system {
+                FailureGroup::Elec => "elec.",
+                FailureGroup::Hyd => "hyd.",
+            };
+            assert!(
+                r.id.starts_with(expected_prefix),
+                "la regla '{}' declara sistema {:?} pero su id no empieza por '{expected_prefix}'",
+                r.id,
+                r.system
+            );
+        }
+    }
+
+    #[test]
+    fn hydraulic_rules_cover_the_phase4_slice() {
+        for id in [
+            "hyd.g.lo_pr",
+            "hyd.b.lo_pr",
+            "hyd.y.lo_pr",
+            "hyd.eng_1_pump.fault",
+            "hyd.eng_2_pump.fault",
+            "hyd.epump_b.fault",
+            "hyd.epump_y.fault",
+            "hyd.ptu.memo",
+        ] {
+            assert!(
+                CATALOG.iter().any(|r| r.id == id),
+                "falta la regla ECAM '{id}'"
+            );
+        }
+        // El memo es informativo, no una caution.
+        let memo = CATALOG.iter().find(|r| r.id == "hyd.ptu.memo").unwrap();
+        assert_eq!(memo.severity, Severity::Advisory);
     }
 
     /// El RAT & EMER GEN queda fuera a propósito: su condición exige

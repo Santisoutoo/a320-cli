@@ -58,6 +58,12 @@ fn find<'a>(ecam: &'a [Warning], id: &str) -> Option<&'a Warning> {
 fn apu_powering_the_network() -> Sim {
     let mut sim = Sim::new();
 
+    // (0) La bomba hidráulica amarilla es un pulsador AUTO/ON invertido y sin
+    //     seeding (D-007) lee 0 = ON: con la red AC viva arrancaría y metería
+    //     transitorios hidráulicos (LO PR / fault de bomba) en un escenario
+    //     eléctrico. Se aparca en AUTO (su posición real de cold & dark).
+    sim.set("hyd_epump_yellow", 1.0).unwrap();
+
     // (1) Combustible disponible y baterías dentro (para el motor de arranque).
     sim.set("UNLIMITED FUEL", 1.0).unwrap();
     sim.set("bat_1", 1.0).unwrap();

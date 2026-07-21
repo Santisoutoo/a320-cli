@@ -69,13 +69,16 @@ impl ControlDomain {
 pub enum ControlGroup {
     /// Sistema eléctrico.
     Elec,
-    // Hyd, Apu, Pneu, Fuel... se añaden en fases posteriores.
+    /// Sistema hidráulico.
+    Hyd,
+    // Apu, Pneu, Fuel... se añaden en fases posteriores.
 }
 
 impl ControlGroup {
     pub fn as_str(&self) -> &'static str {
         match self {
             ControlGroup::Elec => "ELEC",
+            ControlGroup::Hyd => "HYD",
         }
     }
 }
@@ -155,7 +158,7 @@ pub struct Control {
     pub domain: ControlDomain,
 }
 
-/// Catálogo curado. **Fase 1: panel eléctrico.**
+/// Catálogo curado. **Fase 1: panel eléctrico. Fase 4 (slice 1): panel hidráulico.**
 ///
 /// Los LVAR provienen del panel eléctrico superior de FBW
 /// (`a320_systems/src/electrical/mod.rs`, `A320ElectricalOverheadPanel::new`) y
@@ -164,6 +167,26 @@ pub struct Control {
 /// `AutoOffFaultPushButton` usa AUTO, `OnOffFaultPushButton`/`OnOffAvailable`
 /// usan ON. El test `every_catalog_lvar_is_registered_after_a_tick` verifica
 /// que cada `lvar` de aquí existe en el registro (caza typos y drift del vendor).
+///
+/// El panel hidráulico (`a320_systems/src/hydraulic/mod.rs`,
+/// `A320HydraulicOverheadPanel::new`, líneas 4484-4520) añade dos tipos más con
+/// semántica propia:
+///
+/// - `AutoOnFaultPushButton` (bomba eléctrica amarilla): el LVAR sigue siendo
+///   `_PB_IS_AUTO`, pero las posiciones son AUTO/ON — **0 = ON (la bomba
+///   funciona), 1 = AUTO (parada en tierra salvo operación de cargo door)**. Es
+///   el inverso del patrón AUTO/OFF del resto del panel.
+/// - `MomentaryPushButton` / `MomentaryOnPushButton` (RAT man on, blue pump
+///   ovrd): el LVAR de entrada es `_IS_PRESSED` (sin `PB`). El ovrd además
+///   conmuta su estado interno en cada flanco de subida de `_IS_PRESSED` (el
+///   estado resultante se lee en `OVHD_HYD_EPUMPY_OVRD_IS_ON`, que escribe FBW).
+///
+/// **Gotcha del vendor**: el pulsador `HYD_EPUMPY_OVRD` es, pese al nombre del
+/// LVAR, el **BLUE PUMP OVRD** del panel de mantenimiento — lo consume
+/// exclusivamente `A320BlueElectricPumpController` (hydraulic/mod.rs:3139) y el
+/// panel lo apaga si la bomba azul está en OFF (`update_blue_override_state`,
+/// :4523-4527). El nombre amigable (`hyd_epump_blue_ovrd`) sigue la semántica
+/// real, no el nombre del LVAR.
 pub const CATALOG: &[Control] = &[
     Control {
         name: "bat_1",
@@ -237,6 +260,97 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Elec,
         domain: ControlDomain::World,
     },
+    // --- Panel hidráulico (Fase 4, slice 1) ---------------------------------
+    Control {
+        name: "hyd_eng_1_pump",
+        lvar: "OVHD_HYD_ENG_1_PUMP_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 1 (green) hydraulic pump pushbutton: 1 = AUTO (pump pressurises when engine 1 runs), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_eng_2_pump",
+        lvar: "OVHD_HYD_ENG_2_PUMP_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 2 (yellow) hydraulic pump pushbutton: 1 = AUTO (pump pressurises when engine 2 runs), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_epump_blue",
+        lvar: "OVHD_HYD_EPUMPB_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Blue electric pump pushbutton: 1 = AUTO (runs airborne, with an engine running, or with the blue pump override), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_epump_yellow",
+        lvar: "OVHD_HYD_EPUMPY_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Yellow electric pump pushbutton (AUTO/ON, inverted!): 1 = AUTO (pump stopped on ground unless cargo door operation), 0 = ON (pump runs while AC powered)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_epump_blue_ovrd",
+        lvar: "OVHD_HYD_EPUMPY_OVRD_IS_PRESSED",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Blue pump override momentary pushbutton (vendor LVAR says EPUMPY but it overrides the BLUE pump): each 0->1 press toggles the override; requires hyd_epump_blue in AUTO",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_ptu",
+        lvar: "OVHD_HYD_PTU_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Power transfer unit pushbutton: 1 = AUTO (PTU transfers pressure between green and yellow when enabled), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_rat_man_on",
+        lvar: "OVHD_HYD_RAT_MAN_ON_IS_PRESSED",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "RAT manual deploy momentary pushbutton: 1 = pressed (deploys the ram air turbine if its solenoid is powered), 0 = released",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_leak_measurement_g",
+        lvar: "OVHD_HYD_LEAK_MEASUREMENT_G_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Green leak measurement valve pushbutton (maintenance panel): 1 = AUTO (valve open, normal ops), 0 = OFF (valve closed)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_leak_measurement_b",
+        lvar: "OVHD_HYD_LEAK_MEASUREMENT_B_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Blue leak measurement valve pushbutton (maintenance panel): 1 = AUTO (valve open, normal ops), 0 = OFF (valve closed)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_leak_measurement_y",
+        lvar: "OVHD_HYD_LEAK_MEASUREMENT_Y_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Yellow leak measurement valve pushbutton (maintenance panel): 1 = AUTO (valve open, normal ops), 0 = OFF (valve closed)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
 ];
 
 /// Busca una entrada por su nombre amigable.
@@ -268,6 +382,42 @@ mod tests {
         ] {
             assert!(by_name(name).is_some(), "falta el control '{name}'");
         }
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_hydraulic_panel() {
+        // Los controles que el issue #55 (slice 1) exige para el panel Hyd.
+        for name in [
+            "hyd_eng_1_pump",
+            "hyd_eng_2_pump",
+            "hyd_epump_blue",
+            "hyd_epump_yellow",
+            "hyd_epump_blue_ovrd",
+            "hyd_ptu",
+            "hyd_rat_man_on",
+            "hyd_leak_measurement_g",
+            "hyd_leak_measurement_b",
+            "hyd_leak_measurement_y",
+        ] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Hyd, "'{name}' debería ser HYD");
+            assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
+        }
+    }
+
+    #[test]
+    fn momentary_pushbuttons_write_is_pressed_not_pb_is_on() {
+        // Los momentary del vendor usan `OVHD_*_IS_PRESSED` (overhead/mod.rs:614
+        // y :666), sin el segmento `PB`. Un catálogo que apuntase a `_PB_IS_ON`
+        // escribiría una variable que el avión jamás lee.
+        assert_eq!(
+            by_name("hyd_rat_man_on").unwrap().lvar,
+            "OVHD_HYD_RAT_MAN_ON_IS_PRESSED"
+        );
+        assert_eq!(
+            by_name("hyd_epump_blue_ovrd").unwrap().lvar,
+            "OVHD_HYD_EPUMPY_OVRD_IS_PRESSED"
+        );
     }
 
     #[test]

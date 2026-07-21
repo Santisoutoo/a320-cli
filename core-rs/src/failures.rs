@@ -11,14 +11,14 @@
 //! pin se convierte en un diff visible aquí (o en un fallo de compilación si
 //! una variante desaparece), en vez de en una renumeración silenciosa.
 //!
-//! **Alcance de Fase 2: ATA24 (eléctrico)** — el único sistema que la Fase 1 sabe
-//! observar. Los grupos de hidráulico/neumático/fuel/tren se añaden en su fase,
-//! cuando exista cómo verificar que el fallo hace algo observable; catalogar
-//! ahora un id que ningún test puede ejercitar es catalogar un id que puede
-//! estar mal mapeado sin que nadie se entere.
+//! **Alcance: ATA24 (eléctrico, Fase 2) + ATA29 (hidráulico, Fase 4 slice 1).**
+//! Los grupos de neumático/fuel/tren se añaden en su fase, cuando exista cómo
+//! verificar que el fallo hace algo observable; catalogar un id que ningún test
+//! puede ejercitar es catalogar un id que puede estar mal mapeado sin que nadie
+//! se entere.
 //!
 //! **Los ids ATA vienen de FBW.** La tabla `(u32, FailureType)` de
-//! `a320_systems_wasm/src/lib.rs:101-163` es la numeración que usa el propio
+//! `a320_systems_wasm/src/lib.rs:101-200` es la numeración que usa el propio
 //! FBW de cara a su UI. La copiamos como campo [`FailureDef::ata`] para poder
 //! cruzar cualquier id nuestro con upstream. Es un **dato copiado**, no un
 //! enlace: `a320_systems_wasm` no entra en el build nativo (D-005).
@@ -32,20 +32,33 @@
 use std::fmt;
 
 use systems::failures::FailureType;
-use systems::shared::ElectricalBusType;
+use systems::shared::{
+    AirbusElectricPumpId, AirbusEngineDrivenPumpId, ElectricalBusType, HydraulicColor,
+};
 
 /// Sistema al que pertenece el fallo (para agrupar en CLI/MCP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureGroup {
     /// Sistema eléctrico (ATA24).
     Elec,
-    // Hyd, Fuel, Engines, Brakes, RA... se añaden en fases posteriores.
+    /// Sistema hidráulico (ATA29).
+    Hyd,
+    // Fuel, Engines, Brakes, RA... se añaden en fases posteriores.
 }
 
 impl FailureGroup {
     pub fn as_str(&self) -> &'static str {
         match self {
             FailureGroup::Elec => "ELEC",
+            FailureGroup::Hyd => "HYD",
+        }
+    }
+
+    /// Rango ATA (inicio inclusivo, fin exclusivo) que FBW asigna al grupo.
+    pub fn ata_range(&self) -> std::ops::Range<u32> {
+        match self {
+            FailureGroup::Elec => 24_000..25_000,
+            FailureGroup::Hyd => 29_000..30_000,
         }
     }
 }
@@ -85,10 +98,11 @@ impl fmt::Debug for FailureDef {
     }
 }
 
-/// Catálogo curado. **Fase 2: ATA24 (eléctrico).**
+/// Catálogo curado. **Fase 2: ATA24 (eléctrico). Fase 4 slice 1: ATA29
+/// (hidráulico).**
 ///
-/// Correspondencia 1:1 con la tabla ATA24 de FBW
-/// (`a320_systems_wasm/src/lib.rs:101-163`), 20 entradas.
+/// Correspondencia 1:1 con las tablas de FBW (`a320_systems_wasm/src/lib.rs`):
+/// ATA24 en `:101-163` (20 entradas) y ATA29 en `:164-200` (13 entradas).
 pub const CATALOG: &[FailureDef] = &[
     // --- Transformer rectifiers y static inverter ---
     FailureDef {
@@ -247,6 +261,100 @@ pub const CATALOG: &[FailureDef] = &[
         description: "DC GND/FLT SVC bus fails: the ground/flight service DC bus stops conducting",
         group: FailureGroup::Elec,
     },
+    // --- Hidráulico (ATA29, Fase 4 slice 1) ----------------------------------
+    // Correspondencia 1:1 con la tabla ATA29 de FBW
+    // (`a320_systems_wasm/src/lib.rs:164-200`), 13 entradas.
+    FailureDef {
+        id: "hyd.reservoir_leak.green",
+        ata: 29_000,
+        failure_type: FailureType::ReservoirLeak(HydraulicColor::Green),
+        description: "Green reservoir leak: fluid drains overboard (permanently lost) until the pumps starve and green pressure collapses",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_leak.blue",
+        ata: 29_001,
+        failure_type: FailureType::ReservoirLeak(HydraulicColor::Blue),
+        description: "Blue reservoir leak: fluid drains overboard (permanently lost) until the pumps starve and blue pressure collapses",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_leak.yellow",
+        ata: 29_002,
+        failure_type: FailureType::ReservoirLeak(HydraulicColor::Yellow),
+        description: "Yellow reservoir leak: fluid drains overboard (permanently lost) until the pumps starve and yellow pressure collapses",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_air_leak.green",
+        ata: 29_003,
+        failure_type: FailureType::ReservoirAirLeak(HydraulicColor::Green),
+        description: "Green reservoir air pressurisation leak: air pressure decays, degrading pump feed (cavitation)",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_air_leak.blue",
+        ata: 29_004,
+        failure_type: FailureType::ReservoirAirLeak(HydraulicColor::Blue),
+        description: "Blue reservoir air pressurisation leak: air pressure decays, degrading pump feed (cavitation)",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_air_leak.yellow",
+        ata: 29_005,
+        failure_type: FailureType::ReservoirAirLeak(HydraulicColor::Yellow),
+        description: "Yellow reservoir air pressurisation leak: air pressure decays, degrading pump feed (cavitation)",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_return_leak.green",
+        ata: 29_006,
+        failure_type: FailureType::ReservoirReturnLeak(HydraulicColor::Green),
+        description: "Green return line leak: fluid returning to the reservoir is lost instead of recovered",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_return_leak.blue",
+        ata: 29_007,
+        failure_type: FailureType::ReservoirReturnLeak(HydraulicColor::Blue),
+        description: "Blue return line leak: fluid returning to the reservoir is lost instead of recovered",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.reservoir_return_leak.yellow",
+        ata: 29_008,
+        failure_type: FailureType::ReservoirReturnLeak(HydraulicColor::Yellow),
+        description: "Yellow return line leak: fluid returning to the reservoir is lost instead of recovered",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.eng_pump_overheat.green",
+        ata: 29_009,
+        failure_type: FailureType::EnginePumpOverheat(AirbusEngineDrivenPumpId::Green),
+        description: "Engine 1 driven pump (green) overheats: raises the ENG 1 PUMP fault while the pump runs",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.elec_pump_overheat.blue",
+        ata: 29_010,
+        failure_type: FailureType::ElecPumpOverheat(AirbusElectricPumpId::Blue),
+        description: "Blue electric pump overheats: raises the BLUE ELEC PUMP fault while the pump runs",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.eng_pump_overheat.yellow",
+        ata: 29_011,
+        failure_type: FailureType::EnginePumpOverheat(AirbusEngineDrivenPumpId::Yellow),
+        description: "Engine 2 driven pump (yellow) overheats: raises the ENG 2 PUMP fault while the pump runs",
+        group: FailureGroup::Hyd,
+    },
+    FailureDef {
+        id: "hyd.elec_pump_overheat.yellow",
+        ata: 29_012,
+        failure_type: FailureType::ElecPumpOverheat(AirbusElectricPumpId::Yellow),
+        description: "Yellow electric pump overheats: raises the YELLOW ELEC PUMP fault while the pump runs",
+        group: FailureGroup::Hyd,
+    },
 ];
 
 /// Resuelve un id estable a su entrada del catálogo.
@@ -305,12 +413,13 @@ mod tests {
     }
 
     #[test]
-    fn ata_ids_are_unique_and_in_the_ata24_range() {
+    fn ata_ids_are_unique_and_within_their_groups_range() {
         for (i, a) in CATALOG.iter().enumerate() {
             assert!(
-                (24_000..25_000).contains(&a.ata),
-                "'{}' tiene un ATA fuera del rango eléctrico: {}",
+                a.group.ata_range().contains(&a.ata),
+                "'{}' tiene un ATA fuera del rango de su grupo {:?}: {}",
                 a.id,
+                a.group,
                 a.ata
             );
             for b in &CATALOG[i + 1..] {
@@ -338,8 +447,41 @@ mod tests {
         }
     }
 
+    /// El prefijo del id jerárquico y el grupo deben contar la misma historia:
+    /// un `hyd.*` clasificado como ELEC rompería el agrupado de CLI/MCP sin que
+    /// ningún otro test lo notara.
     #[test]
-    fn all_phase2_failures_are_electrical() {
-        assert!(CATALOG.iter().all(|f| f.group == FailureGroup::Elec));
+    fn id_prefix_matches_the_declared_group() {
+        for f in CATALOG {
+            let expected_prefix = match f.group {
+                FailureGroup::Elec => "elec.",
+                FailureGroup::Hyd => "hyd.",
+            };
+            assert!(
+                f.id.starts_with(expected_prefix),
+                "'{}' declara grupo {:?} pero su id no empieza por '{expected_prefix}'",
+                f.id,
+                f.group
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_hydraulic_failures() {
+        // Las 13 entradas ATA29 de FBW (issue #55), ni una más ni una menos.
+        let hyd: Vec<_> = CATALOG
+            .iter()
+            .filter(|f| f.group == FailureGroup::Hyd)
+            .collect();
+        assert_eq!(hyd.len(), 13, "se esperaban los 13 fallos ATA29 de FBW");
+        for id in [
+            "hyd.reservoir_leak.yellow",
+            "hyd.reservoir_air_leak.green",
+            "hyd.reservoir_return_leak.blue",
+            "hyd.eng_pump_overheat.green",
+            "hyd.elec_pump_overheat.yellow",
+        ] {
+            assert!(by_id(id).is_some(), "falta el fallo '{id}'");
+        }
     }
 }
