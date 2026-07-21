@@ -67,6 +67,14 @@ pub mod keys {
     pub const SURFACE_TYPE: &str = "SURFACE TYPE";
     // Tierra
     pub const SIM_ON_GROUND: &str = "SIM ON GROUND";
+    // Compresión de los amortiguadores (crudo en percent, 0..100). El LGCIU
+    // deriva de aquí el weight-on-wheels (`landing_gear/mod.rs:259-266`); sin
+    // escribirlas, un LGCIU alimentado reporta el tren descomprimido y los
+    // sistemas con lógica de tierra (bomba azul en AUTO, PTU) creen estar en
+    // vuelo. Índices según MSFS: sin índice = morro, :1 = izq., :2 = dcha.
+    pub const CONTACT_POINT_COMPRESSION_CENTER: &str = "CONTACT POINT COMPRESSION";
+    pub const CONTACT_POINT_COMPRESSION_LEFT: &str = "CONTACT POINT COMPRESSION:1";
+    pub const CONTACT_POINT_COMPRESSION_RIGHT: &str = "CONTACT POINT COMPRESSION:2";
     // Aceleraciones
     pub const ACCELERATION_BODY_X: &str = "ACCELERATION BODY X";
     pub const ACCELERATION_BODY_Y: &str = "ACCELERATION BODY Y";
@@ -166,6 +174,13 @@ impl Environment {
         } else {
             (0.0, alt_ft)
         };
+        // En tierra los amortiguadores están comprimidos; en vuelo, 0. El valor
+        // crudo va en **percent** (el framework lee `Ratio` como percent,
+        // `simulation/mod.rs:774`, igual que la unidad "Percent" del simvar de
+        // MSFS): 95.0 aquí es el `Ratio` de 0.95 que escribe el test bed de FBW
+        // (`simulation/test.rs:402-414`). Derivarlo de `on_ground` mantiene la
+        // coherencia: no es representable "en tierra con el tren descomprimido".
+        let gear_compression_pct = if self.on_ground { 95.0 } else { 0.0 };
 
         vec![
             // Estado del sim
@@ -208,6 +223,9 @@ impl Environment {
             (keys::SURFACE_TYPE, 0.0),
             // Tierra (coherente con on_ground)
             (keys::SIM_ON_GROUND, on_ground_flag),
+            (keys::CONTACT_POINT_COMPRESSION_CENTER, gear_compression_pct),
+            (keys::CONTACT_POINT_COMPRESSION_LEFT, gear_compression_pct),
+            (keys::CONTACT_POINT_COMPRESSION_RIGHT, gear_compression_pct),
             // Aceleraciones (estacionario)
             (keys::ACCELERATION_BODY_X, 0.0),
             (keys::ACCELERATION_BODY_Y, 0.0),
@@ -267,6 +285,9 @@ mod tests {
         keys::AMBIENT_IN_CLOUD,
         keys::SURFACE_TYPE,
         keys::SIM_ON_GROUND,
+        keys::CONTACT_POINT_COMPRESSION_CENTER,
+        keys::CONTACT_POINT_COMPRESSION_LEFT,
+        keys::CONTACT_POINT_COMPRESSION_RIGHT,
         keys::ACCELERATION_BODY_X,
         keys::ACCELERATION_BODY_Y,
         keys::ACCELERATION_BODY_Z_WITH_REVERSER,
@@ -308,6 +329,15 @@ mod tests {
         assert_eq!(store.peek_by_name(keys::AIRSPEED_TRUE), 0.0);
         assert_eq!(store.peek_by_name(keys::GPS_GROUND_SPEED), 0.0);
         assert_eq!(store.peek_by_name(keys::PLANE_ALT_ABOVE_GROUND), 0.0);
+        // En tierra el tren está comprimido (weight-on-wheels para el LGCIU),
+        // en percent crudo: 95.0 = el Ratio 0.95 del test bed de FBW.
+        for key in [
+            keys::CONTACT_POINT_COMPRESSION_CENTER,
+            keys::CONTACT_POINT_COMPRESSION_LEFT,
+            keys::CONTACT_POINT_COMPRESSION_RIGHT,
+        ] {
+            assert_eq!(store.peek_by_name(key), 95.0, "{key} debería ser 95.0");
+        }
     }
 
     #[test]
