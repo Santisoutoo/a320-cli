@@ -71,7 +71,9 @@ pub enum ControlGroup {
     Elec,
     /// Sistema hidráulico.
     Hyd,
-    // Apu, Pneu, Fuel... se añaden en fases posteriores.
+    /// Unidad de potencia auxiliar.
+    Apu,
+    // Pneu, Fuel... se añaden en fases posteriores.
 }
 
 impl ControlGroup {
@@ -79,6 +81,7 @@ impl ControlGroup {
         match self {
             ControlGroup::Elec => "ELEC",
             ControlGroup::Hyd => "HYD",
+            ControlGroup::Apu => "APU",
         }
     }
 }
@@ -158,7 +161,8 @@ pub struct Control {
     pub domain: ControlDomain,
 }
 
-/// Catálogo curado. **Fase 1: panel eléctrico. Fase 4 (slice 1): panel hidráulico.**
+/// Catálogo curado. **Fase 1: panel eléctrico. Fase 4: panel hidráulico
+/// (slice 1) y panel APU (slice 2).**
 ///
 /// Los LVAR provienen del panel eléctrico superior de FBW
 /// (`a320_systems/src/electrical/mod.rs`, `A320ElectricalOverheadPanel::new`) y
@@ -187,6 +191,23 @@ pub struct Control {
 /// panel lo apaga si la bomba azul está en OFF (`update_blue_override_state`,
 /// :4523-4527). El nombre amigable (`hyd_epump_blue_ovrd`) sigue la semántica
 /// real, no el nombre del LVAR.
+///
+/// El panel APU (Fase 4, slice 2) son dos pulsadores del overhead APU más el
+/// APU BLEED del panel neumático:
+///
+/// - MASTER SW y START se construyen en el propio módulo APU de `systems`
+///   (`fbw-common/.../systems/src/apu/mod.rs:352-353`:
+///   `OnOffFaultPushButton::new_off(context, "APU_MASTER_SW")` y
+///   `OnOffAvailablePushButton::new_off(context, "APU_START")`), de donde salen
+///   `OVHD_APU_MASTER_SW_PB_IS_ON` y `OVHD_APU_START_PB_IS_ON`.
+/// - **Gotcha del bleed**: el LVAR real es `OVHD_PNEU_APU_BLEED_PB_IS_ON` — el
+///   pulsador vive en el panel neumático y se construye con el nombre
+///   `"PNEU_APU_BLEED"` (`a320_systems/src/pneumatic.rs:1545`:
+///   `OnOffFaultPushButton::new_on(context, "PNEU_APU_BLEED")`; el prefijo
+///   `OVHD_` y el sufijo `_PB_IS_ON` los añade `overhead/mod.rs:24-25`). El
+///   nombre "obvio" `OVHD_APU_BLEED_PB_IS_ON` solo existe en un helper del test
+///   bed del vendor (pneumatic.rs:2706-2707) y **ningún sistema lo lee**:
+///   apuntar ahí sería escribir una variable muerta.
 pub const CATALOG: &[Control] = &[
     Control {
         name: "bat_1",
@@ -351,6 +372,34 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Hyd,
         domain: ControlDomain::Cockpit,
     },
+    // --- Panel APU (Fase 4, slice 2) ----------------------------------------
+    Control {
+        name: "apu_master",
+        lvar: "OVHD_APU_MASTER_SW_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU master switch pushbutton: 1 = ON (powers the ECB and opens the air intake flap), 0 = OFF (orderly shutdown)",
+        group: ControlGroup::Apu,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "apu_start",
+        lvar: "OVHD_APU_START_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU start pushbutton: 1 = ON (starts the APU once the master switch is on), 0 = released",
+        group: ControlGroup::Apu,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "apu_bleed",
+        lvar: "OVHD_PNEU_APU_BLEED_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU bleed pushbutton (pneumatic panel): 1 = ON (bleed valve opens once the APU runs above 95% N), 0 = OFF",
+        group: ControlGroup::Apu,
+        domain: ControlDomain::Cockpit,
+    },
 ];
 
 /// Busca una entrada por su nombre amigable.
@@ -403,6 +452,27 @@ mod tests {
             assert_eq!(c.group, ControlGroup::Hyd, "'{name}' debería ser HYD");
             assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
         }
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_apu_panel() {
+        // Los controles que el issue #56 (slice 2) exige para el panel APU.
+        for name in ["apu_master", "apu_start", "apu_bleed"] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Apu, "'{name}' debería ser APU");
+            assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
+        }
+    }
+
+    #[test]
+    fn apu_bleed_writes_the_pneu_prefixed_lvar_not_the_test_bed_decoy() {
+        // El pulsador real se llama "PNEU_APU_BLEED" (pneumatic.rs:1545); el
+        // nombre sin PNEU_ solo existe en el test bed del vendor y ningún
+        // sistema lo lee (ver la doc del catálogo).
+        assert_eq!(
+            by_name("apu_bleed").unwrap().lvar,
+            "OVHD_PNEU_APU_BLEED_PB_IS_ON"
+        );
     }
 
     #[test]

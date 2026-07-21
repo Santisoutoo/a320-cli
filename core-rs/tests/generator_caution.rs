@@ -106,10 +106,16 @@ fn apu_generator_failure_raises_its_caution_and_clearing_retires_it() {
             "precondición: {bus} debería estar alimentado por el APU GEN"
         );
     }
+    // Con el APU sano no hay cautions — pero la ECAM no está vacía: desde el
+    // slice 2 de Fase 4 (#56) el memo verde APU AVAIL acompaña al APU en marcha.
+    let ecam = sim.read_ecam();
     assert!(
-        sim.read_ecam().is_empty(),
-        "precondición: con el APU sano la ECAM debe estar limpia, fue {:?}",
-        sim.read_ecam()
+        ecam.iter().all(|w| w.severity == Severity::Advisory),
+        "precondición: con el APU sano no debe haber cautions, ECAM: {ecam:?}"
+    );
+    assert!(
+        find(&ecam, "apu.avail").is_some(),
+        "precondición: con el APU en marcha se espera el memo APU AVAIL, ECAM: {ecam:?}"
     );
 
     // --- (2) tirar el generador ---------------------------------------------
@@ -157,10 +163,12 @@ fn apu_generator_failure_raises_its_caution_and_clearing_retires_it() {
     sim.clear_failure("elec.apu_gen.1").unwrap();
     sim.run(5.0, 5.0);
 
+    // Las cautions se retiran; el memo APU AVAIL (advisory) permanece, porque
+    // el APU sigue en marcha — reparar el generador no apaga la turbina.
+    let ecam = sim.read_ecam();
     assert!(
-        sim.read_ecam().is_empty(),
-        "fallo limpiado: las cautions deberían retirarse, ECAM: {:?}",
-        sim.read_ecam()
+        ecam.iter().all(|w| w.severity == Severity::Advisory),
+        "fallo limpiado: las cautions deberían retirarse, ECAM: {ecam:?}"
     );
     let s = sim.get(AC_BUSES).unwrap();
     for &bus in AC_BUSES {

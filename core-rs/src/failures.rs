@@ -43,6 +43,14 @@ pub enum FailureGroup {
     Elec,
     /// Sistema hidráulico (ATA29).
     Hyd,
+    /// Unidad de potencia auxiliar (ATA49).
+    ///
+    /// FBW no cataloga **ningún** fallo inyectable ATA49 (la tabla de
+    /// `a320_systems_wasm/src/lib.rs` no tiene entradas 49_xxx; el único fallo
+    /// relacionado con el APU es su generador, clasificado ATA24). El grupo
+    /// existe porque las reglas ECAM del slice 2 de Fase 4 (#56) necesitan
+    /// declarar su sistema, no porque haya `FailureDef`s que agrupar.
+    Apu,
     // Fuel, Engines, Brakes, RA... se añaden en fases posteriores.
 }
 
@@ -51,6 +59,7 @@ impl FailureGroup {
         match self {
             FailureGroup::Elec => "ELEC",
             FailureGroup::Hyd => "HYD",
+            FailureGroup::Apu => "APU",
         }
     }
 
@@ -59,6 +68,7 @@ impl FailureGroup {
         match self {
             FailureGroup::Elec => 24_000..25_000,
             FailureGroup::Hyd => 29_000..30_000,
+            FailureGroup::Apu => 49_000..50_000,
         }
     }
 }
@@ -456,6 +466,7 @@ mod tests {
             let expected_prefix = match f.group {
                 FailureGroup::Elec => "elec.",
                 FailureGroup::Hyd => "hyd.",
+                FailureGroup::Apu => "apu.",
             };
             assert!(
                 f.id.starts_with(expected_prefix),
