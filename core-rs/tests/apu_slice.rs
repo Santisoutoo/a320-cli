@@ -15,11 +15,11 @@
 //!   `left_inner_tank_has_fuel_remaining()` (`a320_systems/src/lib.rs:158-172`,
 //!   `a320_systems/src/fuel/mod.rs:134-137`); si el APU gira sin presión de
 //!   combustible, levanta `ApuFault::FuelLowPressure`
-//!   (`electronic_control_box.rs:224-230`). El Rust de FBW no quema fuel, solo
-//!   lee la cantidad, y `tank_has_fuel` acepta `unlimited_fuel ||
-//!   !quantity.is_zero()` (`fbw-common/.../systems/src/fuel/mod.rs:148`), así
-//!   que basta escribir `UNLIMITED FUEL` — igual que `generator_caution.rs`,
-//!   hasta que el slice 3 (fuel) dé un camino real.
+//!   (`electronic_control_box.rs:224-230`). Desde el slice 3 (#57) el runtime
+//!   siembra la carga por defecto (~6 400 kg, `runtime::FUEL_SEED_GALLONS`) y
+//!   el tanque left main del que bebe el APU tiene fuel real: la muleta
+//!   `UNLIMITED FUEL` ya no hace falta (su retirada la vigila
+//!   `tests/fuel_slice.rs`).
 //! - **AVAIL**: el ECB declara el APU disponible con N>95% sostenido 2 s, o
 //!   N>99.5% (`apu/electronic_control_box.rs:328-337`); el APS3200 tarda ~62 s
 //!   medidos.
@@ -69,15 +69,15 @@ fn run_until(sim: &mut Sim, timeout_s: u32, what: &str, pred: impl Fn(&Sim) -> b
     }
 }
 
-/// Baterías dentro y combustible disponible: lo mínimo para arrancar el APU.
+/// Baterías dentro: lo mínimo para arrancar el APU (el combustible ya viene
+/// del seed por defecto del runtime, slice 3 de Fase 4, #57).
 ///
 /// La bomba hidráulica amarilla se aparca en AUTO (AUTO/ON invertido sin
 /// seeding, D-007) para que no meta transitorios hidráulicos en un escenario
 /// que no va de eso — mismo preámbulo que `generator_caution.rs`.
-fn batteries_and_fuel() -> Sim {
+fn batteries_on() -> Sim {
     let mut sim = Sim::new();
     sim.set("hyd_epump_yellow", 1.0).unwrap();
-    sim.set("UNLIMITED FUEL", 1.0).unwrap();
     sim.set("bat_1", 1.0).unwrap();
     sim.set("bat_2", 1.0).unwrap();
     sim.run(3.0, 5.0);
@@ -86,7 +86,7 @@ fn batteries_and_fuel() -> Sim {
 
 /// Arranca el APU por los controles del catálogo y espera al AVAIL.
 fn apu_available() -> Sim {
-    let mut sim = batteries_and_fuel();
+    let mut sim = batteries_on();
     sim.set(APU_MASTER, 1.0).unwrap();
     sim.run(1.0, 5.0);
     sim.set(APU_START, 1.0).unwrap();
@@ -103,7 +103,7 @@ fn apu_available() -> Sim {
 
 #[test]
 fn apu_starts_via_catalog_controls_and_reaches_available() {
-    let mut sim = batteries_and_fuel();
+    let mut sim = batteries_on();
 
     // Antes de tocar nada, el APU está apagado y no disponible.
     assert_eq!(

@@ -73,7 +73,9 @@ pub enum ControlGroup {
     Hyd,
     /// Unidad de potencia auxiliar.
     Apu,
-    // Pneu, Fuel... se añaden en fases posteriores.
+    /// Sistema de combustible.
+    Fuel,
+    // Pneu... se añaden en fases posteriores.
 }
 
 impl ControlGroup {
@@ -82,6 +84,7 @@ impl ControlGroup {
             ControlGroup::Elec => "ELEC",
             ControlGroup::Hyd => "HYD",
             ControlGroup::Apu => "APU",
+            ControlGroup::Fuel => "FUEL",
         }
     }
 }
@@ -208,6 +211,23 @@ pub struct Control {
 ///   nombre "obvio" `OVHD_APU_BLEED_PB_IS_ON` solo existe en un helper del test
 ///   bed del vendor (pneumatic.rs:2706-2707) y **ningún sistema lo lee**:
 ///   apuntar ahí sería escribir una variable muerta.
+///
+/// El grupo Fuel (Fase 4, slice 3) es **dominio World entero**: el Rust de FBW
+/// no modela consumo ni crossfeed — los tanques son simvars de *entrada* en
+/// galones US que en un sim real escribiría MSFS y aquí falsificamos (el
+/// runtime los siembra una vez, ver `runtime::FUEL_SEED_GALLONS`):
+///
+/// - Tanques y capacidades: `A320_FUEL` (`a320_systems/src/fuel/mod.rs:53-79`);
+///   center 2179 gal, mains 1816 gal, aux 228 gal. El wording MSFS es
+///   `FUEL TANK LEFT MAIN QUANTITY` (no "INNER"): en el mapeo de FBW
+///   `LeftInner` = LEFT MAIN y `LeftOuter` = LEFT AUX
+///   (`A320FuelTankType`, `fuel/mod.rs:23-47`).
+/// - `UNLIMITED FUEL` (`fbw-common/.../fuel/mod.rs:133`): con 1, todo
+///   `tank_has_fuel` responde `true` ignorando las cantidades (`:148-150`).
+/// - Bombas `FUELSYSTEM PUMP ACTIVE:{id}` (`fbw-common/.../fuel/mod.rs:212`;
+///   ids 2/5 left, 3/6 right, 7 APU, `a320_systems/src/fuel/mod.rs:82-123`):
+///   en el Rust del vendor solo alimentan el **consumo eléctrico** de la bomba
+///   — no mueven combustible ni condicionan al APU.
 pub const CATALOG: &[Control] = &[
     Control {
         name: "bat_1",
@@ -400,6 +420,121 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Apu,
         domain: ControlDomain::Cockpit,
     },
+    // --- Fuel como estado de mundo (Fase 4, slice 3) -------------------------
+    Control {
+        name: "fuel_tank_center",
+        lvar: "FUEL TANK CENTER QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 2179.0,
+        },
+        description: "Center tank quantity in US gallons (world state we fake; the vendor Rust reads tank quantities but never burns fuel). Seeded empty by default",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_left_main",
+        lvar: "FUEL TANK LEFT MAIN QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 1816.0,
+        },
+        description: "Left main (inner) tank quantity in US gallons (world state we fake). The APU feeds from this tank: draining it while the APU runs shuts it down",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_left_aux",
+        lvar: "FUEL TANK LEFT AUX QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 228.0,
+        },
+        description: "Left aux (outer) tank quantity in US gallons (world state we fake)",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_right_main",
+        lvar: "FUEL TANK RIGHT MAIN QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 1816.0,
+        },
+        description: "Right main (inner) tank quantity in US gallons (world state we fake)",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_right_aux",
+        lvar: "FUEL TANK RIGHT AUX QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 228.0,
+        },
+        description: "Right aux (outer) tank quantity in US gallons (world state we fake)",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "unlimited_fuel",
+        lvar: "UNLIMITED FUEL",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Unlimited fuel flag (world state we fake): 1 = every tank reads as having fuel regardless of quantity, 0 = tank quantities rule",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_left_1",
+        lvar: "FUELSYSTEM PUMP ACTIVE:2",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Left main tank pump 1 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_left_2",
+        lvar: "FUELSYSTEM PUMP ACTIVE:5",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Left main tank pump 2 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_right_1",
+        lvar: "FUELSYSTEM PUMP ACTIVE:3",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Right main tank pump 1 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_right_2",
+        lvar: "FUELSYSTEM PUMP ACTIVE:6",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Right main tank pump 2 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_apu",
+        lvar: "FUELSYSTEM PUMP ACTIVE:7",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU fuel pump active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption; the APU itself only checks that the left main tank is not empty",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
 ];
 
 /// Busca una entrada por su nombre amigable.
@@ -516,13 +651,76 @@ mod tests {
             by_name("ext_pwr_avail").unwrap().domain,
             ControlDomain::World
         );
-        // El único fake de mundo del catálogo de Fase 1 es EXT_PWR_AVAIL:1.
+        // Los fakes de mundo son EXT_PWR_AVAIL:1 (Fase 1) y el grupo Fuel
+        // entero (Fase 4, slice 3): el Rust de FBW no modela consumo, así que
+        // tanques/bombas/unlimited son mundo, no cabina.
         let world: Vec<_> = CATALOG
             .iter()
             .filter(|c| c.domain == ControlDomain::World)
             .map(|c| c.name)
             .collect();
-        assert_eq!(world, vec!["ext_pwr_avail"]);
+        assert_eq!(
+            world,
+            vec![
+                "ext_pwr_avail",
+                "fuel_tank_center",
+                "fuel_tank_left_main",
+                "fuel_tank_left_aux",
+                "fuel_tank_right_main",
+                "fuel_tank_right_aux",
+                "unlimited_fuel",
+                "fuel_pump_left_1",
+                "fuel_pump_left_2",
+                "fuel_pump_right_1",
+                "fuel_pump_right_2",
+                "fuel_pump_apu",
+            ]
+        );
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_fuel_world_state() {
+        // Los controles que el issue #57 (slice 3) exige para el dominio Fuel:
+        // todos World (no hay pulsadores de fuel en el Rust del vendor).
+        for name in [
+            "fuel_tank_center",
+            "fuel_tank_left_main",
+            "fuel_tank_left_aux",
+            "fuel_tank_right_main",
+            "fuel_tank_right_aux",
+            "unlimited_fuel",
+            "fuel_pump_left_1",
+            "fuel_pump_left_2",
+            "fuel_pump_right_1",
+            "fuel_pump_right_2",
+            "fuel_pump_apu",
+        ] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Fuel, "'{name}' debería ser FUEL");
+            assert_eq!(c.domain, ControlDomain::World, "'{name}' es fake de mundo");
+        }
+    }
+
+    #[test]
+    fn tank_ranges_match_the_vendor_capacities() {
+        // Capacidades de `A320_FUEL` (a320_systems/src/fuel/mod.rs:53-79), en
+        // galones US. Si upstream las cambiara, este test lo delata.
+        for (name, capacity) in [
+            ("fuel_tank_center", 2179.0),
+            ("fuel_tank_left_main", 1816.0),
+            ("fuel_tank_left_aux", 228.0),
+            ("fuel_tank_right_main", 1816.0),
+            ("fuel_tank_right_aux", 228.0),
+        ] {
+            assert_eq!(
+                by_name(name).unwrap().valid,
+                ValidValues::Range {
+                    min: 0.0,
+                    max: capacity
+                },
+                "rango de '{name}'"
+            );
+        }
     }
 
     #[test]

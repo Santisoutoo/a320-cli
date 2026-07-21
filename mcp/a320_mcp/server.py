@@ -305,7 +305,8 @@ def _start_apu_running(sim: "a320_sim.Sim") -> None:
     This is harness work, not agent work: the scenario is the setup, and the
     agent's task is to manage what happens next.
     """
-    sim.set("UNLIMITED FUEL", 1)  # the Rust never burns fuel; it only reads it
+    # Fuel comes from the runtime's default seed (~6 400 kg, Phase 4 slice 3):
+    # the APU feeds from the left main tank, which the seed fills.
     sim.set("bat_1", 1)
     sim.set("bat_2", 1)
     sim.run(3.0, 5.0)
