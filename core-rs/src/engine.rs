@@ -59,9 +59,12 @@ pub fn master_lvar(number: usize) -> String {
 
 /// Interpreta el valor crudo del selector de modo.
 ///
-/// Tolerante a valores fuera del enum (default NORM) para que una escritura
-/// cruda inválida no haga panic en *nuestro* código — el `From<f64>` del vendor
-/// sí haría panic al leer el mismo LVAR, pero ese es su contrato, no el nuestro.
+/// Tolerante a valores fuera del enum para que una escritura cruda inválida no
+/// haga panic en *nuestro* código: valores ≥ 3 caen en NORM (el `From<f64>`
+/// del vendor haría panic al leer el mismo LVAR, pero ese es su contrato, no
+/// el nuestro); negativos y NaN saturan a 0 = CRANK en el `as u8`, igual que
+/// en el cast del vendor. En cualquier caso, todo lo que no sea exactamente
+/// IGN/START (2) se comporta como "no arrancar".
 fn mode_from(value: f64) -> EngineModeSelector {
     match value as u8 {
         0 => EngineModeSelector::Crank,

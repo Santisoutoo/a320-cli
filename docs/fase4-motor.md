@@ -29,7 +29,7 @@ environment.write_all → engines.update(dt) → failures → simulation.tick
 | `TURB ENG CORRECTED N2:{n}` | percent | `LeapEngine` (`leap_engine.rs:43`) |
 | `TURB ENG CORRECTED N1:{n}` | percent | `LeapEngine` (`leap_engine.rs:42`; los packs del aire acondicionado consumen `EngineCorrectedN1`) |
 | `TURB ENG JET THRUST:{n}` | **pound** (se lee como `Mass`, `simulation/mod.rs:781`; `leap_engine.rs:26,76`) | `LeapEngine::net_thrust` |
-| `ENGINE_STATE:{n}` | enum sobre f64: Off=0 / On=1 / Starting=2 / Restarting=3 / Shutting=4 (`fbw-common/.../pneumatic/mod.rs:507-528`) | FADEC de pneumatic (`a320_systems/src/pneumatic.rs:1604-1605`) → válvula de arranque; aire acondicionado (`air_conditioning.rs:1220-1221`) |
+| `ENGINE_STATE:{n}` | enum sobre f64: Off=0 / On=1 / Starting=2 / Restarting=3 / Shutting=4 (`fbw-common/.../pneumatic/mod.rs:507-528`) | FADEC de pneumatic (`a320_systems/src/pneumatic.rs:1604-1605`) → válvula de arranque; el aire acondicionado lo recibe vía el trait `EngineStartState` de `A320Pneumatic` (`pneumatic.rs:388-394`; `air_conditioning.rs:70-79`), no leyendo el simvar |
 | `GENERAL ENG STARTER ACTIVE:{n}` | bool | Controlador del PTU, que lo lee como **eng master on/off** (`a320_systems/src/hydraulic/mod.rs:3449-3452,3550-3554`) |
 
 Y los inputs de cabina que el modelo lee del store:
