@@ -70,10 +70,11 @@ fn apu_powering_the_network() -> Sim {
     sim.set("bat_2", 1.0).unwrap();
     sim.run(3.0, 5.0);
 
-    // (2) APU MASTER SW y START.
-    sim.set("OVHD_APU_MASTER_SW_PB_IS_ON", 1.0).unwrap();
+    // (2) APU MASTER SW y START, por nombre amigable (catalogados desde el
+    //     slice 2 de Fase 4, #56 — mismo cambio que en el arnés del MCP).
+    sim.set("apu_master", 1.0).unwrap();
     sim.run(1.0, 5.0);
-    sim.set("OVHD_APU_START_PB_IS_ON", 1.0).unwrap();
+    sim.set("apu_start", 1.0).unwrap();
 
     // (3) Espera **acotada** a que la turbina esté disponible (no un sleep a
     //     ciegas: se afirma que llega, y en cuánto).
