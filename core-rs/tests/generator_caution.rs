@@ -17,10 +17,11 @@
 //! da falsos positivos. Es el mejor caso disponible, y satisface el criterio al
 //! pie de la letra: es un generador de verdad.
 //!
-//! El arranque no arrastra el sistema de fuel (Fase 4): el Rust de FBW no quema
-//! combustible, solo lee la cantidad (`fuel/mod.rs:1`, *"Fuel system for now is
-//! still handled in MSFS"*), así que basta `UNLIMITED FUEL`
-//! (`fbw-common/.../systems/src/fuel/mod.rs:148`: `unlimited_fuel || !quantity.is_zero()`).
+//! El arranque no arrastra un modelo de consumo (el Rust de FBW no quema
+//! combustible, solo lee cantidades — `fuel/mod.rs:1`, *"Fuel system for now is
+//! still handled in MSFS"*): el APU bebe del tanque left main, que el runtime
+//! siembra con la carga por defecto (slice 3 de Fase 4, #57) — la antigua
+//! muleta `UNLIMITED FUEL` ya no hace falta.
 
 use a320_sim_core::api::Sim;
 use a320_sim_core::ecam::{EcamSource, Severity, Warning};
@@ -64,8 +65,8 @@ fn apu_powering_the_network() -> Sim {
     //     eléctrico. Se aparca en AUTO (su posición real de cold & dark).
     sim.set("hyd_epump_yellow", 1.0).unwrap();
 
-    // (1) Combustible disponible y baterías dentro (para el motor de arranque).
-    sim.set("UNLIMITED FUEL", 1.0).unwrap();
+    // (1) Baterías dentro (para el motor de arranque). El combustible viene
+    //     del seed por defecto del runtime (#57).
     sim.set("bat_1", 1.0).unwrap();
     sim.set("bat_2", 1.0).unwrap();
     sim.run(3.0, 5.0);

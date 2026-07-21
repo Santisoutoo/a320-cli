@@ -105,9 +105,8 @@ fn demo_apu_gen_fault() {
     // Igual que en `main`: bomba amarilla aparcada en AUTO (D-007).
     sim.set("hyd_epump_yellow", 1.0).unwrap();
 
-    // El Rust de FBW no quema combustible, solo lee la cantidad: con
-    // `UNLIMITED FUEL` el APU arranca sin modelar el sistema de fuel (Fase 4).
-    sim.set("UNLIMITED FUEL", 1.0).unwrap();
+    // El combustible viene del seed por defecto del runtime (slice 3, #57): el
+    // APU bebe del tanque left main, ya sembrado — sin muleta `UNLIMITED FUEL`.
     sim.set("bat_1", 1.0).unwrap();
     sim.set("bat_2", 1.0).unwrap();
     sim.run(3.0, 5.0);
