@@ -20,11 +20,6 @@
     dock: bottom;
 }
 
-.pending {
-    color: $text-muted;
-    padding: 1 2;
-}
-
 .section {
     color: $text-muted;
     margin: 1 0 0 0;

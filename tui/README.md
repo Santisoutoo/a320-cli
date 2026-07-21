@@ -1,8 +1,13 @@
 # a320-tui — terminal cockpit (Fase T)
 
-Textual TUI over the same headless core the REPL and the (future) MCP server
-drive: an interactive ELEC overhead panel, an SD-style ELEC synoptic, an E/WD
-warnings area and an embedded command line with the REPL's grammar.
+Textual TUI over the same headless core the REPL and the MCP server drive:
+the **full A320 cockpit generated from a vendored YAML model** (~300
+controls: overhead, glareshield, main panel, pedestal), an SD-style ELEC
+synoptic, an E/WD warnings area and an embedded command line with the
+REPL's grammar. Wired controls (ELEC, APU) actuate the sim; every other
+control is still built and interactable on local state — pressing it,
+opening its guard or moving its lever works, it just doesn't reach the
+aircraft yet (the command log marks those `[local]`).
 
 ## Install & run
 
@@ -21,32 +26,34 @@ colors, box-drawing and mouse support.
 
 ## Layout & keys
 
-- **OVERHEAD · ELEC (35VU)** (left): the real A320 panel geometry — COMMERCIAL
-  and GALY & CAB stacked far left, live battery voltmeters between the BAT 1/2
-  pushbuttons, AC ESS FEED, the painted green bus mimic, and the sources row
-  IDG 1 · GEN 1 · APU GEN · BUS TIE · EXT PWR · GEN 2 · IDG 2. Click (or focus
-  + Enter) to actuate. IDG positions are inert (the sim does not model them,
-  and they say so). Lights show FBW's *raw* pushbutton flags — the FWC-gated
-  view is the E/WD's job. The `WORLD` section holds scenario controls (GPU
-  plugged), not cockpit hardware.
-- **SD · ELEC** (right): buses green when powered, amber when not; TRs and
-  sources green when their output is normal. Links are green only when both
-  ends are alive (an approximation of flow, not contactor-accurate routing).
-- **E/WD**: the ECAM lines from `read_ecam` (red warnings, amber cautions,
-  severity-ordered; `derived` rules carry their marker), plus the injected
-  ground truth in dim below — the harness operator sees both; the MCP agent
-  sees only the ECAM.
+A 2×2 grid of independently scrollable quadrants (the real cockpit stacked
+vertically is ~95 rows and fits no terminal):
+
+- **OVERHEAD [F1]** (NW): aft + forward panels in three columns per the
+  reference layout. The ELEC section is the wired 35VU — live battery
+  voltmeters, the painted green bus mimic, and the sources row. Lights show
+  FBW's *raw* pushbutton flags — the FWC-gated view is the E/WD's job.
+- **GLARESHIELD · MAIN PANEL [F2]** (NE): FCU (push = managed, `p` = pull),
+  EFIS ×2, master warn/caut, PFD/ND placeholders, ISIS, gear and brakes.
+- **PEDESTAL [F3]** (SW): MCDU ×2 (key clusters as composite widgets),
+  RMP/ACP, ECAM control panel, thrust quadrant, flaps, park brake, ATC/TCAS.
+- **ELEC SD · E/WD [F4]** (SE): the synoptic (buses green when powered),
+  the ECAM lines from `read_ecam` plus the injected ground truth in dim,
+  and the `SCENARIO` section for world controls (GPU plugged) — not cockpit
+  hardware.
 - **Command line** (bottom): the REPL grammar (`set`, `get`, `step`, `env`,
   `fail`, `unfail`, `failures`, ...). `watch` and unbounded `run` are
   disabled — the TUI is already a live watch.
 
-Keys: `space` pause/resume · `+`/`-` sim speed (up to x32) · `Tab` move
-focus · `ctrl+q` quit.
+Keys: `F1`-`F4` focus a quadrant · `Tab` move focus · `Enter`/click actuate
+(guarded buttons take two Enters; `Esc` closes the guard) · `[` / `]` turn
+selectors, knobs, levers and key-cluster cursors · `space` pause/resume ·
+`+`/`-` sim speed (up to x32) · `ctrl+q` quit.
 
 ## Quick demo (cold & dark → external power → failure)
 
 1. Click `BAT 1`, `BAT 2` → watch `DC BAT` turn green in the synoptic.
-2. Click `GPU` (WORLD) → `EXT PWR` shows green `AVAIL`.
+2. Click `GPU` (SCENARIO, F4) → `EXT PWR` shows green `AVAIL`.
 3. Click `BUS TIE` (mandatory: no seeding, D-007), then `EXT PWR` → the whole
    AC/DC network sequences to green in ~0.4 s of sim time.
 4. Type `fail elec.tr.1` in the command line → amber entry in the E/WD and
@@ -54,7 +61,12 @@ focus · `ctrl+q` quit.
 
 ## Design notes
 
-See `docs/faseT-tui.md` and decision D-018 in `docs/decisiones.md`. The rules
-that matter: `a320_sim.Sim` is unsendable, so all sim access stays on the main
-event-loop thread (`SimBridge` asserts this); the tick reads a selective `get`
-manifest (~30 vars), never `snapshot()`.
+See `docs/faseT-tui.md` and decisions D-018/D-019 in `docs/decisiones.md`.
+The rules that matter: `a320_sim.Sim` is unsendable, so all sim access stays
+on the main event-loop thread (`SimBridge` asserts this); the tick reads a
+selective `get` manifest (~30 vars), never `snapshot()`, and never refreshes
+local widgets — only actuation does; the vendored YAML
+(`a320_tui/model/a320-controls-model.yaml`) is the single source of truth
+for the cockpit, and the anti-drift tests (`test_model`, `test_wiring`,
+`test_layouts`) guarantee nothing is lost between the YAML, the sim catalog
+and the zone layouts.

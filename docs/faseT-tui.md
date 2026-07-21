@@ -1,8 +1,9 @@
 # Fase T — TUI: cockpit en terminal sobre `a320_sim`
 
-Nota de diseño de la fase T (track paralelo de frontend; decisión [D-018](decisiones.md)).
-Estado: **PoC funcional** en `feat/tui-poc`. La fase completa (issues, tests Pilot
-exhaustivos, captura en el README) queda pendiente de abrir su EPIC.
+Nota de diseño de la fase T (track paralelo de frontend; decisiones [D-018](decisiones.md)
+y [D-019](decisiones.md)). Estado: **cockpit completo derivado del modelo YAML** en
+`feat/tui-poc` (2ª iteración sobre la PoC). La fase completa (issues, captura en el
+README) queda pendiente de abrir su EPIC.
 
 ## Qué es
 
@@ -11,14 +12,20 @@ experta, el MCP la del LLM, y la TUI la ventana *visual* — ver los sistemas y
 paneles del avión dentro de la terminal, en vivo. Sustituye conceptualmente al
 `watch` del REPL (ANSI a pelo, lista plana) por una app Textual con paneles.
 
+La pantalla es una **cuadrícula 2×2 de cuadrantes con scroll independiente**
+(el cockpit real apilado son ~95 filas y no cabe en ninguna terminal; F1–F4
+enfocan cuadrante):
+
 ```
 ┌ StatusBar: t, ▶/⏸, xN, failures ──────────────────────────┐
 ├──────────────────────────┬────────────────────────────────┤
-│ OVERHEAD · ELEC          │ SD · ELEC (synoptic)           │
-│  [BAT 1][BAT 2][EXT PWR] │  buses verde/ámbar, TRs,       │
-│  [GEN 1][BUS TIE][GEN 2] │  fuentes abajo                 │
-│  — WORLD — [GPU]         ├────────────────────────────────┤
-│                          │ E/WD (failures/warnings)       │
+│ OVERHEAD (aft+fwd) [F1]  │ GLARESHIELD · MAIN PANEL [F2]  │
+│  3 columnas fieles al    │  FCU · EFIS ×2 · warnings      │
+│  mockup, ELEC cableado   │  PFD/ND · ISIS · gear/brakes   │
+├──────────────────────────┼────────────────────────────────┤
+│ PEDESTAL [F3]            │ ELEC SD · E/WD [F4]            │
+│  MCDU/RMP/ACP ×2, ECAM   │  synoptic + ECAM + SCENARIO    │
+│  CP, thrust, flaps...    │  (world: GPU)                  │
 ├──────────────────────────┴────────────────────────────────┤
 │ command line (gramática del REPL) + log                   │
 └───────────────────────────────────────────────────────────┘
@@ -35,11 +42,27 @@ paneles del avión dentro de la terminal, en vivo. Sustituye conceptualmente al
   y los failures activos. Los widgets renderizan solo desde `SimState` (render
   puro, testeable sin terminal) y nunca tocan el `Sim`; actúan emitiendo
   `KorryButton.Pressed`, que la app traduce a `bridge.set(...)`.
-- **`manifest.py`**: la parte data-driven. `button_specs()` construye el
-  overhead desde `list_controls()` + overlays de display (legend, semántica de
-  luces Korry); un control sin overlay recibe un botón genérico, así los
-  controles de Fase 4 aparecen sin tocar la TUI. `manifest_vars()` es el `get`
-  selectivo del tick (~30 vars) — **nunca** `snapshot()`.
+- **`model/`** (D-019): el YAML vendorizado (`a320-controls-model.yaml`,
+  copia byte-idéntica de la spec externa) + `loader.py`: 423 `ControlDef`
+  tras instanciación ×2/×3 (la tabla vive en el parser; el YAML solo la marca
+  en comentarios) y expansión de LSK/SYS_PAGES. Ids canónicos únicos
+  (`EFIS_CAPT.FD`, `RMP_3.VHF1`).
+- **`cockpit_state.py` + `controller.py`**: todo control del modelo es
+  interactuable aunque no tenga sim detrás — korrys latchean, guardas en dos
+  pasos, fire pb saltan, selectores/palancas con topes, knobs con clamp,
+  push/pull del FCU — sobre estado local puro (`CockpitRegistry`), renderizado
+  vía `ControlView` frozen. El `CockpitController` enruta: id cableado →
+  `bridge.set`; el resto → registro local.
+- **`wiring.py`**: el binding declarativo YAML↔sim por id canónico (catálogo
+  ELEC + extras por LVAR crudo + APU). `manifest.py` conserva el lado de
+  observación: `manifest_vars()` es el `get` selectivo del tick (~30 vars) —
+  **nunca** `snapshot()`. El tick refresca **solo** widgets cableados +
+  synoptic + E/WD; los ~410 locales solo se repintan al actuarlos.
+- **`layouts/`**: la geometría como datos por zona, transcrita de los mockups
+  de `tui/docs/` (`AutoSection` por defecto — coloca una sección YAML entera —
+  y filas a mano donde el mockup fija geometría, como el 35VU). El test de
+  cobertura garantiza que las cuatro zonas colocan los 423 controles
+  exactamente una vez.
 - **`EmbeddedRepl`** (`commands.py`): subclase de `A320Repl` con stdout en un
   buffer, ejecutada con `onecmd()` por línea — una sola gramática. Overrides:
   `watch` (la TUI ya es un watch), `run` capado a 30 s (bloquearía el event
@@ -61,28 +84,26 @@ GALY & CAB    DC BUS 1 ↑ AC ESS BUS ↑ DC BUS 2          <- mímico pintado
 IDG 1   GEN 1   APU GEN   BUS TIE   EXT PWR   GEN 2   IDG 2
 ```
 
-La geometría vive como **datos** en `manifest.py` (`PANEL_TOP_ROW`,
-`PANEL_LEFT_STACK`, `PANEL_SOURCES_ROW`), con cuatro clases de slot:
+La geometría vive como **datos** en `layouts/overhead.py` (sección ELEC del
+cuadrante OVERHEAD, filas transcritas a mano). Resolución de slots en
+`widgets/zone_panel.py`:
 
-- `catalog:` — controles del catálogo curado (los de siempre).
-- `extra:` — hardware que FBW modela pero el catálogo aún no expone
-  (AC ESS FEED, COMMERCIAL, GALY & CAB). Actúan por el camino de LVAR crudo de
-  `sim.set` (D-008/D-009) — lo mismo que `set OVHD_...` en el REPL. Verificados
-  contra el vendor (`a320_systems/src/electrical/mod.rs:283-286`) y contra el
-  registro vivo (test `test_extra_panel_hardware_exists_in_the_registry`).
-- `bat_display:` — los voltímetros reales entre los pb de batería
-  (`ELEC_BAT_{1,2}_POTENTIAL`, vivos).
-- `prop:` — posiciones del panel real que la sim **no** modela (IDG 1/2):
-  inertes y visiblemente inertes; fingir función sería peor que el hueco.
+- id en `WIRING` — `KorryButton` cableado (catálogo curado o LVAR crudo,
+  D-008/D-009; los extras AC ESS FEED / COMMERCIAL / GALY & CAB verificados
+  contra el vendor `a320_systems/src/electrical/mod.rs:283-286` y contra el
+  registro vivo por `test_wiring.py`).
+- `BAT_DISPLAY` — los voltímetros reales de batería en un readout vivo
+  (`ELEC_BAT_{1,2}_POTENTIAL`).
+- `mimic:` — el mímico de buses va **pintado** (verde estático), como en el
+  avión: las líneas del 35VU real no se encienden con el estado — la imagen
+  viva es del synoptic.
+- cualquier otro id — widget local por tipo (IDG 1/2 son ahora `pb_guard`
+  locales de verdad, ya no props inertes: todo control del modelo se
+  construye igual, con o sin sim detrás).
 
-El mímico de buses va **pintado** (verde estático), como en el avión: las
-líneas del 35VU real no se encienden con el estado — la imagen viva es del
-synoptic, y mantener los roles separados evita duplicar instrumentos.
-
-Los controles de catálogo que la geometría no coloque caen en una sección
-OTHER (la promesa data-driven sigue: un control de Fase 4 aparece sin tocar la
-TUI, feo pero funcional, y el test `test_the_35vu_geometry_covers_todays_
-cockpit_catalog` avisa para decidirle sitio).
+Un control cockpit nuevo del catálogo sin cablear rompe
+`test_every_cockpit_catalog_control_is_wired`, y un control del YAML sin
+sitio rompe la cobertura de `test_layouts.py` — nada se pierde en silencio.
 
 ## Semántica de luces Korry (overhead)
 
@@ -140,23 +161,41 @@ Fase 2 el panel muestra solo el ground truth.
 
 ## Verificación
 
-- `tui/tests/`: anti-drift del manifest (toda var del manifest existe en el
-  registro tras un tick — el gemelo Python del test del catálogo Rust), render
-  del synoptic con estados sintéticos, y specs data-driven completos.
-- Guion e2e (automatizado headless con `App.run_test()` durante la PoC):
+- `tui/tests/` (52 tests): el modelo parsea con ids únicos y defaults cold &
+  dark (`test_model.py`); semántica por tipo del estado local
+  (`test_cockpit_state.py`); anti-drift del wiring — toda var cableada existe
+  en el registro, ningún control del catálogo queda sin cablear
+  (`test_wiring.py`, más el manifest heredado en `test_manifest.py`); render
+  puro de cada tipo de widget (`test_widget_render.py`); cobertura total de
+  los layouts (`test_layouts.py`); y sinóptico (`test_synoptic_render.py`).
+- e2e **commiteado como suite** (`test_app_elec_e2e.py`, `App.run_test()`):
   cold & dark → BAT 1/2 (DC BAT verde) → GPU (AVAIL) → BUS TIE + EXT PWR (red
-  AC/DC completa verde en ~0.4 s sim) → `fail elec.tr.1` (caution en E/WD, TR 1
-  atenuado) → `unfail` restaura. BUS TIE es obligatorio: no hay seeding (D-007).
+  AC/DC verde) → `fail elec.tr.1` (caution en E/WD) → `unfail` restaura, todo
+  por la ruta real de mensajes de los widgets; y el test de aislamiento local
+  (guarda en dos pasos + selector ADIRS **sin** tocar `bridge.set`). BUS TIE
+  es obligatorio: no hay seeding (D-007).
+- Rendimiento medido (terminal 160×50, las 4 zonas montadas): ~705 nodos,
+  arranque ~2.2 s (mount) + ~1 s de construir el `Sim`; refresh forzado
+  ~10 ms. Fallback documentado si creciera: montaje diferido por cuadrante
+  con `call_after_refresh` — **no** `ContentSwitcher` (decisión de UX: los 4
+  cuadrantes visibles a la vez).
 - Manual: `a320-tui` en **Windows Terminal** (conhost degrada box-drawing/ratón).
 
-## Deuda de la PoC (para la fase completa)
+## Deuda (para la fase completa)
 
-- Issues + EPIC `phase:T`/`area:tui` sin abrir; tests Pilot e2e como suite.
+- Issues + EPIC `phase:T`/`area:tui` sin abrir.
 - ~~`fail`/`unfail`/`failures` duplicados en `EmbeddedRepl`~~ — borrados al
   mergear la Fase 2; la gramática embebida hereda también `ecam`.
+- ~~Tests Pilot e2e como suite~~ — commiteados (`test_app_elec_e2e.py`).
 - Captura/screenshot en `docs/assets/` y fila del README con estado real.
-- Páginas synoptic adicionales (HYD, etc.) cuando Fase 4 traiga los sistemas
-  (registro `SYNOPTIC_PAGES` ya extensible).
-- Si AC ESS FEED / COMMERCIAL / GALY & CAB se catalogan en `core-rs` (Fase 4),
-  mover sus overlays de `EXTRA_PANEL_SPECS` a `BUTTON_OVERLAYS` y borrar la
-  entrada extra.
+- Páginas synoptic adicionales (HYD, etc.) cuando Fase 4 traiga los sistemas.
+- Cuando un control local gradúe al catálogo de `core-rs` (Fase 4: APU ya
+  cableado por LVAR crudo, hidráulico...), su entrada se añade/actualiza en
+  `wiring.WIRING`; el anti-drift avisa de catálogo huérfano.
+- Detalles de fidelidad del estado local: los switches spring-loaded
+  (MAN V/S, INT/RAD, DOOR UNLOCK) no retornan solos a NEUTRAL; `LDG_ELEV` no
+  tiene camino de vuelta al detent AUTO tras girarlo; los displays
+  (MCDU/PFD/ND/ISIS) son placeholders oscuros.
+- Re-sync de la spec externa (`Documents/a320`): copiar el YAML byte-idéntico
+  y correr los tests; los números fijados (423, instancias) son el diff
+  consciente.

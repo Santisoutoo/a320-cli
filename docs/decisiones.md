@@ -203,18 +203,19 @@ La TUI (cockpit en terminal: overhead ELEC interactivo, synoptic estilo SD, E/WD
 - **`a320-cli` lanza la TUI cuando está instalada** (`a320_cli/launcher.py`, import opcional → sigue stdlib-only); `a320-cli --repl` conserva el REPL clásico.
 - Gotcha registrado: `OVHD_ELEC_EXT_PWR_PB_IS_AVAILABLE` nunca sube en el build headless; la señal de AVAIL es `ELEC_EXT_PWR_POTENTIAL_NORMAL`.
 
-## Hitos
+### D-019 — La TUI se genera del modelo YAML vendorizado; los controles sin backend operan en estado local (Fase T)
+**Fecha**: 2026-07-21 (Fase T, cockpit completo en `feat/tui-poc`)
+Nota de diseño completa: `docs/faseT-tui.md`.
 
-### Fase 1 cerrada — 2026-07-15
-Criterio de éxito cumplido y automatizado: cold & dark → baterías ON → ext pwr con la red cobrando vida, como test de integración (`core-rs/tests/electrical_slice.rs`) y operable a mano en el REPL (`a320-cli`, con `watch`). Entregado en los PRs #29 (readme), #30/#34/#32/#33 (runtime + API, issues #6–#9), #36 (catálogo, #10), #37 (bindings PyO3, #11), #35 (test de integración, #13), #38 (CLI, #12) y #40 (fix del wedge del primer tick, #39, encontrado en la verificación final). Decisiones asociadas: D-007 a D-012. Pin del vendor intacto (`13bce4b`), cero parches al código de FBW. Siguiente: Fase 2 (failures + `read_ecam`, issues #14–#16).
+La spec externa del cockpit (`C:\Users\santi\Documents\a320`) se **vendoriza** en `tui/`: el YAML de ~300 controles como package-data byte-idéntico (`tui/a320_tui/model/a320-controls-model.yaml`, cargado con `importlib.resources`) y los mockups ASCII en `tui/docs/`. De ahí se genera el **cockpit completo** (423 controles tras instanciación ×2/×3 y expansión de LSK/SYS_PAGES), en una **cuadrícula 2×2 de cuadrantes scrollables** (decisión del usuario: el apilado vertical ~95 filas no cabe; nada de pantallas conmutables).
 
-## Abiertas
-
-*(ninguna)*
-
-## Parches al código vendorizado de FBW
-
-*(ninguno todavía — cada stub/shim/parche necesario para el build nativo se documenta aquí con archivo y motivo)*
+- **La tabla de instanciación vive en el parser** (`model/loader.py`), no en el YAML: la spec la marca solo en comentarios y `safe_load` los pierde. Editar el YAML vendorizado rompería el single source of truth (re-sync = copia + diff de tests).
+- **Todo control se construye igual, tenga sim o no** (requisito del usuario): los no cableados operan sobre `CockpitRegistry` (estado local puro con la semántica de su tipo: guardas en dos pasos, momentáneos, detents, clamp, push/pull) y se renderizan desde un `ControlView` frozen. El tick **no** los refresca — solo actuarlos lo hace; los ~15 cableados + synoptic + E/WD siguen el patrón de refresh de D-018.
+- **El binding YAML↔sim es un dict declarativo** (`wiring.py`, id canónico → spec): catálogo ELEC + extras por LVAR crudo + APU (mismos LVARs que usa el arnés del MCP). Anti-drift triple en `test_wiring.py`; descartado ponerlo en el YAML (misma razón que la instanciación) o en un segundo YAML (un parser más sin beneficio).
+- **La geometría es datos por zona** (`layouts/`): `AutoSection` coloca secciones YAML enteras (el default — enumerar ~400 ids a mano es como se pierde uno en silencio) y filas manuales donde el mockup fija geometría (ELEC 35VU, thrust quadrant). Cobertura total garantizada por test: las 4 zonas colocan los 423 exactamente una vez. Descartado parsear los mockups ASCII (celdas como `[L PUMP 1·2]` comprimen varios controles).
+- **Los grupos de teclas son un widget compuesto** (`KeyGroup`): la MCDU expandida serían ~50 widgets ×2 sin valor interactivo hoy; solo LSK y SYS_PAGES se expanden porque el mockup los dibuja individuales.
+- **IDG 1/2 gradúan de props inertes a `pb_guard` locales** — la regla nueva sustituye a la de D-018 ("fingir función sería peor que el hueco"): ahora la frontera honesta no es hueco vs función, sino *cableado* (SimState) vs *local* (sin efecto en el avión), y el log de la command line lo marca con `[local]`.
+- Rendimiento medido: ~705 nodos, mount ~2.2 s, refresh forzado ~10 ms. Fallback si creciera: montaje diferido por cuadrante (`call_after_refresh`), nunca `ContentSwitcher`.
 
 ## Hitos
 
