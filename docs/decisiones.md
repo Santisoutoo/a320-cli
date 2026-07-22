@@ -254,6 +254,17 @@ Entregado en los PRs #52 (servidor, #51) y #NN (demo, #17). Decisiones: D-015 (F
 
 **Siguiente**: Fase 4 (#18, hidráulico + APU + fuel + arranque de motores). El APU es el candidato más barato: ya está probado y arrancable, pero sus pulsadores solo son accionables por LVAR crudo — catalogarlos cerraría el hueco que la tabla de sistemas dejó ver.
 
+### Fase 4 cerrada — 2026-07-22
+Criterio de éxito cumplido y automatizado: **la secuencia completa cold & dark → engines running**, solo con nombres amigables del catálogo, como test de integración con un checkpoint verificado tras cada paso (`core-rs/tests/cold_dark_to_engines_running.rs`), reproducible a mano en el REPL y entregable a un LLM con `a320-mcp --start engines-running` (probado por el protocolo real en `mcp/tests/test_server.py`). Estado final: ambos motores al ralentí (N2 ~58.5 %), red AC entera por los ENG GEN (sin APU GEN ni ext pwr), verde y amarillo a ~3000 psi por las EDPs, azul por su bomba eléctrica en AUTO, PTU habilitado sin transferir (presiones parejas), APU apagado y **ECAM completamente limpia**.
+
+Entregado en los PRs #61 (panel hidráulico, #55), #62 (controles del APU, #56), #63 (fuel como estado de mundo, #57), #64 (modelo de motor propio, #58), #65 (cross-system de motor, #59) y #66 (secuencia end-to-end, #60). Decisiones asociadas: D-018 (fuel sembrado una vez), D-019 (motor propio: spool de N2 de primer orden), D-020 (contrato de arranque + gate de bleed) y D-021 (reposos de panel sembrados y catalogados). Pin del vendor intacto (`13bce4b`), cero parches al código de FBW.
+
+**Timing medido de la secuencia** (5 Hz): AVAIL del APU a ~55 s del START, cada motor a idle en ~50 s desde que su starter recibe aire, y el apagado ordenado del APU (cooldown de bleed + spool-down) ~116 s tras MASTER OFF — ~340 s de simulación en total, ~90 s de reloj en build de debug (segundos en release, que es lo que carga el binding del MCP).
+
+**Del cierre quedan dos notas.** (1) El bus tie es la pieza que un operador puede olvidar: sin él el APU GEN no alimenta AC 1/2 y el BMC del crossbleed se queda muerto — el arranque del motor 2 depende de un pulsador del panel eléctrico; las `INSTRUCTIONS` del MCP lo avisan como regla de pulgar. (2) La deuda D-021 sigue viva: las bombas eléctricas azul/amarilla y el PTU descansan en AUTO en el avión real pero el runtime no los siembra — la secuencia los pone a mano en la preparación de panel (tres `set` antes de las baterías). Sembrarlos movería los baselines de Fase 1-2; le toca a la Fase 5 decidir si el reposo pasa a ser el default de escenario.
+
+**Siguiente**: Fase 5 (benchmark; épicas #19 y #20): suite de escenarios con ground truth QRH, scoring de cumplimiento a nivel de trayectoria, baselines y ablations.
+
 ## Abiertas
 
 *(ninguna)*
