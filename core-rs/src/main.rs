@@ -51,6 +51,11 @@ fn report_ecam(sim: &Sim) {
 fn main() {
     let mut sim = Sim::new();
 
+    // La bomba hidráulica amarilla (pulsador AUTO/ON invertido) lee 0 = ON sin
+    // seeding (D-007): se aparca en AUTO para que esta demo eléctrica no
+    // arrastre transitorios hidráulicos a la ECAM.
+    sim.set("hyd_epump_yellow", 1.0).unwrap();
+
     // Cold & dark: los pulsadores leen su default OFF (sin seeding, D-007).
     sim.step(1000);
     report("[cold & dark]", &sim.get(OBSERVED).unwrap());
@@ -97,9 +102,11 @@ fn demo_apu_gen_fault() {
     println!("\n--- Fase 2 (#16): el fallo de un generador levanta su caution ---");
     let mut sim = Sim::new();
 
-    // El Rust de FBW no quema combustible, solo lee la cantidad: con
-    // `UNLIMITED FUEL` el APU arranca sin modelar el sistema de fuel (Fase 4).
-    sim.set("UNLIMITED FUEL", 1.0).unwrap();
+    // Igual que en `main`: bomba amarilla aparcada en AUTO (D-007).
+    sim.set("hyd_epump_yellow", 1.0).unwrap();
+
+    // El combustible viene del seed por defecto del runtime (slice 3, #57): el
+    // APU bebe del tanque left main, ya sembrado — sin muleta `UNLIMITED FUEL`.
     sim.set("bat_1", 1.0).unwrap();
     sim.set("bat_2", 1.0).unwrap();
     sim.run(3.0, 5.0);

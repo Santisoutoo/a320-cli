@@ -9,8 +9,8 @@ from a terminal by a human or over MCP by an LLM agent.**
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue)](#license--credits)
 [![Rust 1.93](https://img.shields.io/badge/rust-1.93-b7410e?logo=rust)](core-rs/rust-toolchain.toml)
 [![FBW pin](https://img.shields.io/badge/FBW%20pin-13bce4b-6f42c1)](docs/decisiones.md)
-[![Phase 2](https://img.shields.io/badge/phase%202-next-d4a017)](#roadmap)
-[![MCP server](https://img.shields.io/badge/MCP%20server-planned-6e7781)](#the-agent-loop)
+[![Phase 5](https://img.shields.io/badge/phase%205-next-d4a017)](#roadmap)
+[![MCP server](https://img.shields.io/badge/MCP%20server-shipped-2ea44f)](#the-agent-loop)
 
 </div>
 
@@ -213,8 +213,8 @@ place, so you see contactors sequence — not just a before and an after.
 | **1 — Core + API + CLI** | Persistent runtime over `Simulation<A320>`, variable registry, `set`/`get`/`step` API, human REPL; electrical vertical slice on ground | **Done** — success criterion automated as an integration test (`core-rs/tests/electrical_slice.rs`); curated control catalog, PyO3 bindings (`a320_sim`) and REPL with live `watch` shipped; design note in [docs/fase1-runtime.md](docs/fase1-runtime.md) (Spanish) |
 | **2 — Failures + detection** | `inject_failure` / `list_failures`, `read_ecam` | **Done** — success criterion automated (`core-rs/tests/generator_caution.rs`): the APU generator fails and its caution appears. Stable failure ids (`elec.tr.1`) decoupled from FBW's enum ([D-013](docs/decisiones.md)). **There is no FWC in the vendored Rust**, so the ECAM catalog is ours — a rule engine over what FBW actually writes, with each rule declaring whether its logic is FBW's or ours ([D-014](docs/decisiones.md), [docs/fase2-ecam.md](docs/fase2-ecam.md)) |
 | **3 — MCP server** | Expose the API as MCP tools; end-to-end demo: hand an LLM a failed generator and watch it work the procedure | **Done** — nine tools over stdio ([mcp/README.md](mcp/README.md)), tested by spawning the server and driving it over the real protocol. An LLM resolved the APU GEN failure from the ECAM alone. What the agent **cannot** see is part of the contract: the active-failure list is deliberately not a tool, or the benchmark would measure reading instead of diagnosis ([D-016](docs/decisiones.md)) |
-| **4 — More systems** | Hydraulics, APU, fuel, engine start; richer world boundary (N2 input) | **Next** |
-| **5 — Benchmark (research)** | Scenario suite with QRH ground truth, trajectory-level compliance scoring, baselines + ablations | Planned |
+| **4 — More systems** | Hydraulics, APU, fuel, engine start; richer world boundary (N2 input) | **Done** — the full **cold & dark → engines running** sequence runs on catalog names alone, automated as the closing integration test (`core-rs/tests/cold_dark_to_engines_running.rs`) and available to an agent as `a320-mcp --start engines-running`: batteries → APU + bleed → engine 1 on APU air → engine 2 off the crossbleed → engine generators take the network, all three hydraulic circuits pressurized, APU shut down, clean ECAM. The engine itself is ours — FBW's Rust only *reads* engine simvars — a deterministic first-order N2 spool ([D-019](docs/decisiones.md)); fuel is world state seeded once ([D-018](docs/decisiones.md)); engine starts demand real bleed air ([D-020](docs/decisiones.md)); panel resting states seeded ([D-021](docs/decisiones.md)) |
+| **5 — Benchmark (research)** | Scenario suite with QRH ground truth, trajectory-level compliance scoring, baselines + ablations | **Next** |
 
 Architecture decisions are recorded in [docs/decisiones.md](docs/decisiones.md) (Spanish):
 FBW pin, why no msfs-rs decoupling was needed, PyO3 vs pure-Rust rationale. Project

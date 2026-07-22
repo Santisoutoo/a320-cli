@@ -17,10 +17,11 @@
 //! da falsos positivos. Es el mejor caso disponible, y satisface el criterio al
 //! pie de la letra: es un generador de verdad.
 //!
-//! El arranque no arrastra el sistema de fuel (Fase 4): el Rust de FBW no quema
-//! combustible, solo lee la cantidad (`fuel/mod.rs:1`, *"Fuel system for now is
-//! still handled in MSFS"*), así que basta `UNLIMITED FUEL`
-//! (`fbw-common/.../systems/src/fuel/mod.rs:148`: `unlimited_fuel || !quantity.is_zero()`).
+//! El arranque no arrastra un modelo de consumo (el Rust de FBW no quema
+//! combustible, solo lee cantidades — `fuel/mod.rs:1`, *"Fuel system for now is
+//! still handled in MSFS"*): el APU bebe del tanque left main, que el runtime
+//! siembra con la carga por defecto (slice 3 de Fase 4, #57) — la antigua
+//! muleta `UNLIMITED FUEL` ya no hace falta.
 
 use a320_sim_core::api::Sim;
 use a320_sim_core::ecam::{EcamSource, Severity, Warning};
@@ -58,16 +59,23 @@ fn find<'a>(ecam: &'a [Warning], id: &str) -> Option<&'a Warning> {
 fn apu_powering_the_network() -> Sim {
     let mut sim = Sim::new();
 
-    // (1) Combustible disponible y baterías dentro (para el motor de arranque).
-    sim.set("UNLIMITED FUEL", 1.0).unwrap();
+    // (0) La bomba hidráulica amarilla es un pulsador AUTO/ON invertido y sin
+    //     seeding (D-007) lee 0 = ON: con la red AC viva arrancaría y metería
+    //     transitorios hidráulicos (LO PR / fault de bomba) en un escenario
+    //     eléctrico. Se aparca en AUTO (su posición real de cold & dark).
+    sim.set("hyd_epump_yellow", 1.0).unwrap();
+
+    // (1) Baterías dentro (para el motor de arranque). El combustible viene
+    //     del seed por defecto del runtime (#57).
     sim.set("bat_1", 1.0).unwrap();
     sim.set("bat_2", 1.0).unwrap();
     sim.run(3.0, 5.0);
 
-    // (2) APU MASTER SW y START.
-    sim.set("OVHD_APU_MASTER_SW_PB_IS_ON", 1.0).unwrap();
+    // (2) APU MASTER SW y START, por nombre amigable (catalogados desde el
+    //     slice 2 de Fase 4, #56 — mismo cambio que en el arnés del MCP).
+    sim.set("apu_master", 1.0).unwrap();
     sim.run(1.0, 5.0);
-    sim.set("OVHD_APU_START_PB_IS_ON", 1.0).unwrap();
+    sim.set("apu_start", 1.0).unwrap();
 
     // (3) Espera **acotada** a que la turbina esté disponible (no un sleep a
     //     ciegas: se afirma que llega, y en cuánto).
@@ -100,10 +108,16 @@ fn apu_generator_failure_raises_its_caution_and_clearing_retires_it() {
             "precondición: {bus} debería estar alimentado por el APU GEN"
         );
     }
+    // Con el APU sano no hay cautions — pero la ECAM no está vacía: desde el
+    // slice 2 de Fase 4 (#56) el memo verde APU AVAIL acompaña al APU en marcha.
+    let ecam = sim.read_ecam();
     assert!(
-        sim.read_ecam().is_empty(),
-        "precondición: con el APU sano la ECAM debe estar limpia, fue {:?}",
-        sim.read_ecam()
+        ecam.iter().all(|w| w.severity == Severity::Advisory),
+        "precondición: con el APU sano no debe haber cautions, ECAM: {ecam:?}"
+    );
+    assert!(
+        find(&ecam, "apu.avail").is_some(),
+        "precondición: con el APU en marcha se espera el memo APU AVAIL, ECAM: {ecam:?}"
     );
 
     // --- (2) tirar el generador ---------------------------------------------
@@ -151,10 +165,12 @@ fn apu_generator_failure_raises_its_caution_and_clearing_retires_it() {
     sim.clear_failure("elec.apu_gen.1").unwrap();
     sim.run(5.0, 5.0);
 
+    // Las cautions se retiran; el memo APU AVAIL (advisory) permanece, porque
+    // el APU sigue en marcha — reparar el generador no apaga la turbina.
+    let ecam = sim.read_ecam();
     assert!(
-        sim.read_ecam().is_empty(),
-        "fallo limpiado: las cautions deberían retirarse, ECAM: {:?}",
-        sim.read_ecam()
+        ecam.iter().all(|w| w.severity == Severity::Advisory),
+        "fallo limpiado: las cautions deberían retirarse, ECAM: {ecam:?}"
     );
     let s = sim.get(AC_BUSES).unwrap();
     for &bus in AC_BUSES {

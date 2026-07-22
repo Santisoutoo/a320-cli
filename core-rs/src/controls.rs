@@ -69,13 +69,27 @@ impl ControlDomain {
 pub enum ControlGroup {
     /// Sistema eléctrico.
     Elec,
-    // Hyd, Apu, Pneu, Fuel... se añaden en fases posteriores.
+    /// Sistema hidráulico.
+    Hyd,
+    /// Unidad de potencia auxiliar.
+    Apu,
+    /// Sistema de combustible.
+    Fuel,
+    /// Motores (panel ENG: masters + selector de modo).
+    Eng,
+    /// Neumático (Fase 4, slice 5: selector X BLEED).
+    Pneu,
 }
 
 impl ControlGroup {
     pub fn as_str(&self) -> &'static str {
         match self {
             ControlGroup::Elec => "ELEC",
+            ControlGroup::Hyd => "HYD",
+            ControlGroup::Apu => "APU",
+            ControlGroup::Fuel => "FUEL",
+            ControlGroup::Eng => "ENG",
+            ControlGroup::Pneu => "PNEU",
         }
     }
 }
@@ -155,7 +169,9 @@ pub struct Control {
     pub domain: ControlDomain,
 }
 
-/// Catálogo curado. **Fase 1: panel eléctrico.**
+/// Catálogo curado. **Fase 1: panel eléctrico. Fase 4: panel hidráulico
+/// (slice 1), panel APU (slice 2), fuel como mundo (slice 3) y panel ENG
+/// (slice 4).**
 ///
 /// Los LVAR provienen del panel eléctrico superior de FBW
 /// (`a320_systems/src/electrical/mod.rs`, `A320ElectricalOverheadPanel::new`) y
@@ -164,6 +180,60 @@ pub struct Control {
 /// `AutoOffFaultPushButton` usa AUTO, `OnOffFaultPushButton`/`OnOffAvailable`
 /// usan ON. El test `every_catalog_lvar_is_registered_after_a_tick` verifica
 /// que cada `lvar` de aquí existe en el registro (caza typos y drift del vendor).
+///
+/// El panel hidráulico (`a320_systems/src/hydraulic/mod.rs`,
+/// `A320HydraulicOverheadPanel::new`, líneas 4484-4520) añade dos tipos más con
+/// semántica propia:
+///
+/// - `AutoOnFaultPushButton` (bomba eléctrica amarilla): el LVAR sigue siendo
+///   `_PB_IS_AUTO`, pero las posiciones son AUTO/ON — **0 = ON (la bomba
+///   funciona), 1 = AUTO (parada en tierra salvo operación de cargo door)**. Es
+///   el inverso del patrón AUTO/OFF del resto del panel.
+/// - `MomentaryPushButton` / `MomentaryOnPushButton` (RAT man on, blue pump
+///   ovrd): el LVAR de entrada es `_IS_PRESSED` (sin `PB`). El ovrd además
+///   conmuta su estado interno en cada flanco de subida de `_IS_PRESSED` (el
+///   estado resultante se lee en `OVHD_HYD_EPUMPY_OVRD_IS_ON`, que escribe FBW).
+///
+/// **Gotcha del vendor**: el pulsador `HYD_EPUMPY_OVRD` es, pese al nombre del
+/// LVAR, el **BLUE PUMP OVRD** del panel de mantenimiento — lo consume
+/// exclusivamente `A320BlueElectricPumpController` (hydraulic/mod.rs:3139) y el
+/// panel lo apaga si la bomba azul está en OFF (`update_blue_override_state`,
+/// :4523-4527). El nombre amigable (`hyd_epump_blue_ovrd`) sigue la semántica
+/// real, no el nombre del LVAR.
+///
+/// El panel APU (Fase 4, slice 2) son dos pulsadores del overhead APU más el
+/// APU BLEED del panel neumático:
+///
+/// - MASTER SW y START se construyen en el propio módulo APU de `systems`
+///   (`fbw-common/.../systems/src/apu/mod.rs:352-353`:
+///   `OnOffFaultPushButton::new_off(context, "APU_MASTER_SW")` y
+///   `OnOffAvailablePushButton::new_off(context, "APU_START")`), de donde salen
+///   `OVHD_APU_MASTER_SW_PB_IS_ON` y `OVHD_APU_START_PB_IS_ON`.
+/// - **Gotcha del bleed**: el LVAR real es `OVHD_PNEU_APU_BLEED_PB_IS_ON` — el
+///   pulsador vive en el panel neumático y se construye con el nombre
+///   `"PNEU_APU_BLEED"` (`a320_systems/src/pneumatic.rs:1545`:
+///   `OnOffFaultPushButton::new_on(context, "PNEU_APU_BLEED")`; el prefijo
+///   `OVHD_` y el sufijo `_PB_IS_ON` los añade `overhead/mod.rs:24-25`). El
+///   nombre "obvio" `OVHD_APU_BLEED_PB_IS_ON` solo existe en un helper del test
+///   bed del vendor (pneumatic.rs:2706-2707) y **ningún sistema lo lee**:
+///   apuntar ahí sería escribir una variable muerta.
+///
+/// El grupo Fuel (Fase 4, slice 3) es **dominio World entero**: el Rust de FBW
+/// no modela consumo ni crossfeed — los tanques son simvars de *entrada* en
+/// galones US que en un sim real escribiría MSFS y aquí falsificamos (el
+/// runtime los siembra una vez, ver `runtime::FUEL_SEED_GALLONS`):
+///
+/// - Tanques y capacidades: `A320_FUEL` (`a320_systems/src/fuel/mod.rs:53-79`);
+///   center 2179 gal, mains 1816 gal, aux 228 gal. El wording MSFS es
+///   `FUEL TANK LEFT MAIN QUANTITY` (no "INNER"): en el mapeo de FBW
+///   `LeftInner` = LEFT MAIN y `LeftOuter` = LEFT AUX
+///   (`A320FuelTankType`, `fuel/mod.rs:23-47`).
+/// - `UNLIMITED FUEL` (`fbw-common/.../fuel/mod.rs:133`): con 1, todo
+///   `tank_has_fuel` responde `true` ignorando las cantidades (`:148-150`).
+/// - Bombas `FUELSYSTEM PUMP ACTIVE:{id}` (`fbw-common/.../fuel/mod.rs:212`;
+///   ids 2/5 left, 3/6 right, 7 APU, `a320_systems/src/fuel/mod.rs:82-123`):
+///   en el Rust del vendor solo alimentan el **consumo eléctrico** de la bomba
+///   — no mueven combustible ni condicionan al APU.
 pub const CATALOG: &[Control] = &[
     Control {
         name: "bat_1",
@@ -228,6 +298,23 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Elec,
         domain: ControlDomain::Cockpit,
     },
+    // GEN 1 LINE (panel EMER ELEC, Fase 4 slice 5, D-021): pulsador real del
+    // overhead que el procedimiento SMOKE apaga para aislar la línea del GEN 1.
+    // El vendor lo construye `OnOffFaultPushButton::new_on(context,
+    // "EMER_ELEC_GEN_1_LINE")` (`a320_systems/src/electrical/mod.rs:391`) y
+    // `gen_1_provides_power` lo exige además del pulsador GEN 1
+    // (`electrical/alternating_current.rs:433-436`; el GEN 2 no tiene condición
+    // equivalente, `:437-439`). El runtime lo siembra a ON — su reposo real —
+    // porque el `seed()` del vendor no es accesible (D-007).
+    Control {
+        name: "gen_1_line",
+        lvar: "OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "GEN 1 LINE pushbutton (EMER ELEC panel, rests ON): 1 = ON (gen 1 line contactor may close), 0 = OFF (isolates generator 1, SMOKE procedure)",
+        group: ControlGroup::Elec,
+        domain: ControlDomain::Cockpit,
+    },
     Control {
         name: "ext_pwr_avail",
         lvar: "EXT_PWR_AVAIL:1",
@@ -235,6 +322,312 @@ pub const CATALOG: &[Control] = &[
         valid: ValidValues::Bool,
         description: "External power availability (world state we fake): 1 = GPU plugged in, 0 = not connected",
         group: ControlGroup::Elec,
+        domain: ControlDomain::World,
+    },
+    // --- Panel hidráulico (Fase 4, slice 1) ---------------------------------
+    Control {
+        name: "hyd_eng_1_pump",
+        lvar: "OVHD_HYD_ENG_1_PUMP_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 1 (green) hydraulic pump pushbutton: 1 = AUTO (pump pressurises when engine 1 runs), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_eng_2_pump",
+        lvar: "OVHD_HYD_ENG_2_PUMP_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 2 (yellow) hydraulic pump pushbutton: 1 = AUTO (pump pressurises when engine 2 runs), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_epump_blue",
+        lvar: "OVHD_HYD_EPUMPB_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Blue electric pump pushbutton: 1 = AUTO (runs airborne, with an engine running, or with the blue pump override), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_epump_yellow",
+        lvar: "OVHD_HYD_EPUMPY_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Yellow electric pump pushbutton (AUTO/ON, inverted!): 1 = AUTO (pump stopped on ground unless cargo door operation), 0 = ON (pump runs while AC powered)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_epump_blue_ovrd",
+        lvar: "OVHD_HYD_EPUMPY_OVRD_IS_PRESSED",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Blue pump override momentary pushbutton (vendor LVAR says EPUMPY but it overrides the BLUE pump): each 0->1 press toggles the override; requires hyd_epump_blue in AUTO",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_ptu",
+        lvar: "OVHD_HYD_PTU_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Power transfer unit pushbutton: 1 = AUTO (PTU transfers pressure between green and yellow when enabled), 0 = OFF",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_rat_man_on",
+        lvar: "OVHD_HYD_RAT_MAN_ON_IS_PRESSED",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "RAT manual deploy momentary pushbutton: 1 = pressed (deploys the ram air turbine if its solenoid is powered), 0 = released",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_leak_measurement_g",
+        lvar: "OVHD_HYD_LEAK_MEASUREMENT_G_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Green leak measurement valve pushbutton (maintenance panel): 1 = AUTO (valve open, normal ops), 0 = OFF (valve closed)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_leak_measurement_b",
+        lvar: "OVHD_HYD_LEAK_MEASUREMENT_B_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Blue leak measurement valve pushbutton (maintenance panel): 1 = AUTO (valve open, normal ops), 0 = OFF (valve closed)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "hyd_leak_measurement_y",
+        lvar: "OVHD_HYD_LEAK_MEASUREMENT_Y_PB_IS_AUTO",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Yellow leak measurement valve pushbutton (maintenance panel): 1 = AUTO (valve open, normal ops), 0 = OFF (valve closed)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    // Freno de parking (Fase 4, slice 5): palanca real de cabina que el
+    // controlador del PTU lee (`PARK_BRAKE_LEVER_POS`,
+    // `a320_systems/src/hydraulic/mod.rs:3448,3551`) — con un solo engine
+    // master ON en tierra, el PTU en AUTO solo queda habilitado con el freno
+    // suelto y sin bypass pin (`:3491-3497`). Sin seed: el default 0 (suelto)
+    // conserva el baseline de los slices previos; ver D-021.
+    Control {
+        name: "park_brake",
+        lvar: "PARK_BRAKE_LEVER_POS",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Parking brake lever: 1 = set, 0 = released. With exactly one engine master ON on ground, setting it inhibits the PTU (single-engine-start inhibit)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
+    // --- Panel APU (Fase 4, slice 2) ----------------------------------------
+    Control {
+        name: "apu_master",
+        lvar: "OVHD_APU_MASTER_SW_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU master switch pushbutton: 1 = ON (powers the ECB and opens the air intake flap), 0 = OFF (orderly shutdown)",
+        group: ControlGroup::Apu,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "apu_start",
+        lvar: "OVHD_APU_START_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU start pushbutton: 1 = ON (starts the APU once the master switch is on), 0 = released",
+        group: ControlGroup::Apu,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "apu_bleed",
+        lvar: "OVHD_PNEU_APU_BLEED_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU bleed pushbutton (pneumatic panel): 1 = ON (bleed valve opens once the APU runs above 95% N), 0 = OFF",
+        group: ControlGroup::Apu,
+        domain: ControlDomain::Cockpit,
+    },
+    // --- Panel ENG (Fase 4, slice 4) -----------------------------------------
+    //
+    // Los LVARs `ENG_MASTER_{1,2}` son NUESTROS, no del vendor: en MSFS el
+    // engine master vive en el fuel system C++ y ningún elemento del Rust del
+    // vendor lo registra — los lee nuestro `EngineModel` (`src/engine.rs`) y
+    // los siembra el runtime (`ENGINE_CONTROL_SEED`). Ver D-020. El selector de
+    // modo sí es del vendor: `TURB ENG IGNITION SWITCH EX1:1`, un único
+    // selector para ambos motores, leído por el FADEC de pneumatic
+    // (`a320_systems/src/pneumatic.rs:1608-1609`) con el enum
+    // `EngineModeSelector` 0=CRANK / 1=NORM / 2=IGN-START
+    // (`fbw-common/.../pneumatic/mod.rs:764-782`).
+    Control {
+        name: "eng_master_1",
+        lvar: "ENG_MASTER_1",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 1 master lever (our LVAR, not the vendor's): 1 = ON (starts with mode selector at IGN/START; keeps the engine running), 0 = OFF (shuts the engine down)",
+        group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "eng_master_2",
+        lvar: "ENG_MASTER_2",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Engine 2 master lever (our LVAR, not the vendor's): 1 = ON (starts with mode selector at IGN/START; keeps the engine running), 0 = OFF (shuts the engine down)",
+        group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
+    Control {
+        name: "eng_mode",
+        lvar: "TURB ENG IGNITION SWITCH EX1:1",
+        kind: ControlKind::Enum,
+        valid: ValidValues::Enum(&[0.0, 1.0, 2.0]),
+        description: "Engine mode selector, one rotary selector for both engines: 0 = CRANK, 1 = NORM (rest position), 2 = IGN/START (arms the start when a master goes ON)",
+        group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
+    // --- Panel neumático (Fase 4, slice 5) -----------------------------------
+    //
+    // Selector X BLEED: el vendor lo construye `CrossBleedValveSelectorKnob::
+    // new_auto` sobre el LVAR `KNOB_OVHD_AIRCOND_XBLEED_Position`
+    // (`fbw-common/.../pneumatic/mod.rs:462-470`), enum SHUT=0/AUTO=1/OPEN=2
+    // (`:487-491`). En AUTO, la válvula de crossbleed abre cuando abre la de
+    // APU bleed (`a320_systems/src/pneumatic.rs:986-1008`) — es lo que lleva
+    // aire del APU al starter del motor 2. El runtime lo siembra a AUTO (su
+    // reposo real; sin seed leería 0 = SHUT y el motor 2 jamás arrancaría con
+    // aire del APU). Ver D-021.
+    Control {
+        name: "xbleed",
+        lvar: "KNOB_OVHD_AIRCOND_XBLEED_Position",
+        kind: ControlKind::Enum,
+        valid: ValidValues::Enum(&[0.0, 1.0, 2.0]),
+        description: "Crossbleed valve selector (pneumatic panel, rests at AUTO): 0 = SHUT, 1 = AUTO (opens with the APU bleed valve), 2 = OPEN",
+        group: ControlGroup::Pneu,
+        domain: ControlDomain::Cockpit,
+    },
+    // --- Fuel como estado de mundo (Fase 4, slice 3) -------------------------
+    Control {
+        name: "fuel_tank_center",
+        lvar: "FUEL TANK CENTER QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 2179.0,
+        },
+        description: "Center tank quantity in US gallons (world state we fake; the vendor Rust reads tank quantities but never burns fuel). Seeded empty by default",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_left_main",
+        lvar: "FUEL TANK LEFT MAIN QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 1816.0,
+        },
+        description: "Left main (inner) tank quantity in US gallons (world state we fake). The APU feeds from this tank: draining it while the APU runs shuts it down",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_left_aux",
+        lvar: "FUEL TANK LEFT AUX QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 228.0,
+        },
+        description: "Left aux (outer) tank quantity in US gallons (world state we fake)",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_right_main",
+        lvar: "FUEL TANK RIGHT MAIN QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 1816.0,
+        },
+        description: "Right main (inner) tank quantity in US gallons (world state we fake)",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_tank_right_aux",
+        lvar: "FUEL TANK RIGHT AUX QUANTITY",
+        kind: ControlKind::Float,
+        valid: ValidValues::Range {
+            min: 0.0,
+            max: 228.0,
+        },
+        description: "Right aux (outer) tank quantity in US gallons (world state we fake)",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "unlimited_fuel",
+        lvar: "UNLIMITED FUEL",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Unlimited fuel flag (world state we fake): 1 = every tank reads as having fuel regardless of quantity, 0 = tank quantities rule",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_left_1",
+        lvar: "FUELSYSTEM PUMP ACTIVE:2",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Left main tank pump 1 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_left_2",
+        lvar: "FUELSYSTEM PUMP ACTIVE:5",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Left main tank pump 2 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_right_1",
+        lvar: "FUELSYSTEM PUMP ACTIVE:3",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Right main tank pump 1 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_right_2",
+        lvar: "FUELSYSTEM PUMP ACTIVE:6",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Right main tank pump 2 active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption, it moves no fuel",
+        group: ControlGroup::Fuel,
+        domain: ControlDomain::World,
+    },
+    Control {
+        name: "fuel_pump_apu",
+        lvar: "FUELSYSTEM PUMP ACTIVE:7",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "APU fuel pump active flag (world state we fake): in the vendor Rust it only drives the pump's electrical consumption; the APU itself only checks that the left main tank is not empty",
+        group: ControlGroup::Fuel,
         domain: ControlDomain::World,
     },
 ];
@@ -270,6 +663,105 @@ mod tests {
         }
     }
 
+    /// D-021 (Fase 4, slice 5): el GEN 1 LINE es cabina real (panel EMER ELEC)
+    /// y escribe el LVAR del pulsador del vendor, no un nombre inventado.
+    #[test]
+    fn gen_1_line_is_a_cockpit_control_on_the_emer_elec_lvar() {
+        let c = by_name("gen_1_line").expect("falta el control 'gen_1_line'");
+        assert_eq!(c.lvar, "OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON");
+        assert_eq!(c.group, ControlGroup::Elec);
+        assert_eq!(c.domain, ControlDomain::Cockpit);
+    }
+
+    /// Slice 5 (#59): el selector X BLEED y el freno de parking quedan
+    /// catalogados con sus LVARs reales del vendor y sus posiciones exactas.
+    #[test]
+    fn catalog_covers_the_phase4_cross_system_controls() {
+        let xbleed = by_name("xbleed").expect("falta el control 'xbleed'");
+        assert_eq!(xbleed.lvar, "KNOB_OVHD_AIRCOND_XBLEED_Position");
+        assert_eq!(xbleed.group, ControlGroup::Pneu);
+        assert_eq!(xbleed.domain, ControlDomain::Cockpit);
+        // SHUT=0 / AUTO=1 / OPEN=2 (fbw-common/.../pneumatic/mod.rs:487-491).
+        assert_eq!(xbleed.valid, ValidValues::Enum(&[0.0, 1.0, 2.0]));
+
+        let brake = by_name("park_brake").expect("falta el control 'park_brake'");
+        assert_eq!(brake.lvar, "PARK_BRAKE_LEVER_POS");
+        assert_eq!(brake.group, ControlGroup::Hyd);
+        assert_eq!(brake.domain, ControlDomain::Cockpit);
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_hydraulic_panel() {
+        // Los controles que el issue #55 (slice 1) exige para el panel Hyd.
+        for name in [
+            "hyd_eng_1_pump",
+            "hyd_eng_2_pump",
+            "hyd_epump_blue",
+            "hyd_epump_yellow",
+            "hyd_epump_blue_ovrd",
+            "hyd_ptu",
+            "hyd_rat_man_on",
+            "hyd_leak_measurement_g",
+            "hyd_leak_measurement_b",
+            "hyd_leak_measurement_y",
+        ] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Hyd, "'{name}' debería ser HYD");
+            assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
+        }
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_apu_panel() {
+        // Los controles que el issue #56 (slice 2) exige para el panel APU.
+        for name in ["apu_master", "apu_start", "apu_bleed"] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Apu, "'{name}' debería ser APU");
+            assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
+        }
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_engine_panel() {
+        // Los controles que el issue #58 (slice 4) exige para el panel ENG.
+        for name in ["eng_master_1", "eng_master_2", "eng_mode"] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Eng, "'{name}' debería ser ENG");
+            assert_eq!(c.domain, ControlDomain::Cockpit, "'{name}' es de cabina");
+        }
+        // El selector real del vendor (un solo selector para ambos motores) y
+        // sus tres posiciones exactas: CRANK=0 / NORM=1 / IGN-START=2.
+        let mode = by_name("eng_mode").unwrap();
+        assert_eq!(mode.lvar, "TURB ENG IGNITION SWITCH EX1:1");
+        assert_eq!(mode.valid, ValidValues::Enum(&[0.0, 1.0, 2.0]));
+    }
+
+    #[test]
+    fn apu_bleed_writes_the_pneu_prefixed_lvar_not_the_test_bed_decoy() {
+        // El pulsador real se llama "PNEU_APU_BLEED" (pneumatic.rs:1545); el
+        // nombre sin PNEU_ solo existe en el test bed del vendor y ningún
+        // sistema lo lee (ver la doc del catálogo).
+        assert_eq!(
+            by_name("apu_bleed").unwrap().lvar,
+            "OVHD_PNEU_APU_BLEED_PB_IS_ON"
+        );
+    }
+
+    #[test]
+    fn momentary_pushbuttons_write_is_pressed_not_pb_is_on() {
+        // Los momentary del vendor usan `OVHD_*_IS_PRESSED` (overhead/mod.rs:614
+        // y :666), sin el segmento `PB`. Un catálogo que apuntase a `_PB_IS_ON`
+        // escribiría una variable que el avión jamás lee.
+        assert_eq!(
+            by_name("hyd_rat_man_on").unwrap().lvar,
+            "OVHD_HYD_RAT_MAN_ON_IS_PRESSED"
+        );
+        assert_eq!(
+            by_name("hyd_epump_blue_ovrd").unwrap().lvar,
+            "OVHD_HYD_EPUMPY_OVRD_IS_PRESSED"
+        );
+    }
+
     #[test]
     fn friendly_names_are_unique() {
         for (i, a) in CATALOG.iter().enumerate() {
@@ -296,13 +788,76 @@ mod tests {
             by_name("ext_pwr_avail").unwrap().domain,
             ControlDomain::World
         );
-        // El único fake de mundo del catálogo de Fase 1 es EXT_PWR_AVAIL:1.
+        // Los fakes de mundo son EXT_PWR_AVAIL:1 (Fase 1) y el grupo Fuel
+        // entero (Fase 4, slice 3): el Rust de FBW no modela consumo, así que
+        // tanques/bombas/unlimited son mundo, no cabina.
         let world: Vec<_> = CATALOG
             .iter()
             .filter(|c| c.domain == ControlDomain::World)
             .map(|c| c.name)
             .collect();
-        assert_eq!(world, vec!["ext_pwr_avail"]);
+        assert_eq!(
+            world,
+            vec![
+                "ext_pwr_avail",
+                "fuel_tank_center",
+                "fuel_tank_left_main",
+                "fuel_tank_left_aux",
+                "fuel_tank_right_main",
+                "fuel_tank_right_aux",
+                "unlimited_fuel",
+                "fuel_pump_left_1",
+                "fuel_pump_left_2",
+                "fuel_pump_right_1",
+                "fuel_pump_right_2",
+                "fuel_pump_apu",
+            ]
+        );
+    }
+
+    #[test]
+    fn catalog_covers_the_phase4_fuel_world_state() {
+        // Los controles que el issue #57 (slice 3) exige para el dominio Fuel:
+        // todos World (no hay pulsadores de fuel en el Rust del vendor).
+        for name in [
+            "fuel_tank_center",
+            "fuel_tank_left_main",
+            "fuel_tank_left_aux",
+            "fuel_tank_right_main",
+            "fuel_tank_right_aux",
+            "unlimited_fuel",
+            "fuel_pump_left_1",
+            "fuel_pump_left_2",
+            "fuel_pump_right_1",
+            "fuel_pump_right_2",
+            "fuel_pump_apu",
+        ] {
+            let c = by_name(name).unwrap_or_else(|| panic!("falta el control '{name}'"));
+            assert_eq!(c.group, ControlGroup::Fuel, "'{name}' debería ser FUEL");
+            assert_eq!(c.domain, ControlDomain::World, "'{name}' es fake de mundo");
+        }
+    }
+
+    #[test]
+    fn tank_ranges_match_the_vendor_capacities() {
+        // Capacidades de `A320_FUEL` (a320_systems/src/fuel/mod.rs:53-79), en
+        // galones US. Si upstream las cambiara, este test lo delata.
+        for (name, capacity) in [
+            ("fuel_tank_center", 2179.0),
+            ("fuel_tank_left_main", 1816.0),
+            ("fuel_tank_left_aux", 228.0),
+            ("fuel_tank_right_main", 1816.0),
+            ("fuel_tank_right_aux", 228.0),
+        ] {
+            assert_eq!(
+                by_name(name).unwrap().valid,
+                ValidValues::Range {
+                    min: 0.0,
+                    max: capacity
+                },
+                "rango de '{name}'"
+            );
+        }
     }
 
     #[test]

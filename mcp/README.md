@@ -21,16 +21,20 @@ pip install -e mcp/
 ## Run
 
 ```powershell
-a320-mcp                        # cold & dark (default)
-a320-mcp --start apu-running    # APU started and feeding the AC network
+a320-mcp                            # cold & dark (default)
+a320-mcp --start apu-running        # APU started and feeding the AC network
+a320-mcp --start engines-running    # both engines at idle powering everything
 ```
 
 The server speaks **stdio**, so you don't normally run it by hand — a client
 launches it and talks over the pipe.
 
 `--start apu-running` takes ~60 s of *simulated* time at boot (a few seconds of
-wall clock) to spin the APU up before serving. The scenario is the harness's
-job, not the agent's.
+wall clock) to spin the APU up before serving; `--start engines-running` runs
+the full cold & dark → engines running sequence (~6 min simulated: APU, APU
+bleed, both engine starts, APU shutdown) and hands over a healthy aircraft on
+its engine generators with a clean ECAM. The scenario is the harness's job, not
+the agent's.
 
 ## Point a client at it
 
