@@ -111,9 +111,9 @@ const ENGINE_CONTROL_SEED: &[(&str, f64)] = &[
 ///   (`a320_systems/src/electrical/mod.rs:391`) — reposo **ON** (solo se apaga
 ///   en el procedimiento SMOKE). Sin seed, `gen_1_provides_power` — que exige
 ///   `generator_1_line_is_on()` además del pulsador GEN 1
-///   (`electrical/alternating_current.rs:432-435`) — sería falso para siempre:
+///   (`electrical/alternating_current.rs:433-436`) — sería falso para siempre:
 ///   el GEN 1 giraría a 115 V sin cerrar su contactor, con `ENG 1 GEN FAULT`
-///   en un avión sano. El GEN 2 no tiene condición equivalente (`:436-438`).
+///   en un avión sano. El GEN 2 no tiene condición equivalente (`:437-439`).
 /// - **Selector X BLEED** (panel neumático): el vendor lo construye
 ///   `CrossBleedValveSelectorKnob::new_auto` con el LVAR
 ///   `KNOB_OVHD_AIRCOND_XBLEED_Position`

@@ -7,8 +7,8 @@
 //!
 //! - **GEN 1 exige el pulsador GEN 1 LINE** del panel EMER ELEC además del GEN
 //!   1: `gen_1_provides_power` (`a320_systems/src/electrical/
-//!   alternating_current.rs:432-435`); el GEN 2 no tiene condición equivalente
-//!   (`:436-438`). El vendor construye el pulsador en reposo ON
+//!   alternating_current.rs:433-436`); el GEN 2 no tiene condición equivalente
+//!   (`:437-439`). El vendor construye el pulsador en reposo ON
 //!   (`electrical/mod.rs:391`, `new_on`) y el runtime lo siembra así (D-021).
 //! - **EDPs**: `LeapEngine::hydraulic_pump_output_speed` deriva del N2 que
 //!   generamos (`fbw-common/.../engine/leap_engine.rs:61-69`); con la bomba en
@@ -142,7 +142,7 @@ fn engine_1_generator_powers_the_whole_network_without_apu_gen_or_ext_pwr() {
     );
 
     // El gotcha del GEN 1 LINE, ahora como control: apagarlo aísla el GEN 1
-    // (gen_1_provides_power exige la línea, alternating_current.rs:432-435) y
+    // (gen_1_provides_power exige la línea, alternating_current.rs:433-436) y
     // la red cae con su caution; encenderlo la recupera.
     sim.set("gen_1_line", 0.0).unwrap();
     sim.run(3.0, 5.0);

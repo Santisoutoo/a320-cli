@@ -303,8 +303,8 @@ pub const CATALOG: &[Control] = &[
     // El vendor lo construye `OnOffFaultPushButton::new_on(context,
     // "EMER_ELEC_GEN_1_LINE")` (`a320_systems/src/electrical/mod.rs:391`) y
     // `gen_1_provides_power` lo exige además del pulsador GEN 1
-    // (`electrical/alternating_current.rs:432-435`; el GEN 2 no tiene condición
-    // equivalente, `:436-438`). El runtime lo siembra a ON — su reposo real —
+    // (`electrical/alternating_current.rs:433-436`; el GEN 2 no tiene condición
+    // equivalente, `:437-439`). El runtime lo siembra a ON — su reposo real —
     // porque el `seed()` del vendor no es accesible (D-007).
     Control {
         name: "gen_1_line",
