@@ -95,7 +95,10 @@ reach AVAIL, and an engine start takes ~55 s once its starter has bleed air \
 must be on for the APU generator or external power to feed the whole AC \
 network. Engines are commanded from the panel: `eng_mode` to 2 (IGN/START), \
 then `eng_master_1`/`eng_master_2` to 1; `eng_mode` back to 1 (NORM) after \
-start.
+start. Give the bleed air a few seconds before commanding a master: the \
+crossbleed valve takes ~3 s to travel open, and a starter opened against a \
+half-open valve can settle below its pressurization threshold and stall that \
+start attempt (recover by cycling the master).
 """
 
 mcp = FastMCP("a320-systems", instructions=INSTRUCTIONS)

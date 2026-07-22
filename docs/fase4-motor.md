@@ -123,6 +123,20 @@ es del vendor y funciona headless con física real de contenedores:
    — el selector X BLEED descansa en AUTO por el seed de D-021 (sin él leería
    0 = SHUT y el motor 2 jamás arrancaría).
 
+**Filo conocido (verificación del slice 6)**: la válvula de crossbleed viaja a
+0.4/s — tarda **2,5 s** en abrir del todo (`CrossBleedValve::new(Ratio 0.4)`,
+`a320_systems/src/pneumatic.rs:157`; velocidad aplicada en `:1792-1800`). Si el
+master del motor 2 se comanda con la válvula aún a medio abrir (menos de ~3 s
+después de abrir el APU bleed), la válvula de arranque abre contra un flujo
+débil y el ducto puede asentarse en un **equilibrio estable por debajo del
+umbral de 10 psig**: el flag no arma y ese intento de arranque se queda clavado
+indefinidamente (no es una carrera que se resuelva sola). Con el crossbleed ya
+abierto — p. ej. arrancando el motor 1 primero, o dejando ~3 s tras el bleed —
+el pico inicial supera el umbral y el flag queda latcheado (cae a 5 psig). Los
+autores de escenarios deben dar unos segundos al aire antes del master; la
+recuperación operacional es ciclar el master (cerrar la válvula de starter deja
+presurizar el ducto).
+
 **Consecuencia para el determinismo**: el instante en que llega el aire hereda
 el azar real del vendor (flap de admisión del APU sorteado 6-12 s,
 `fbw-common/.../apu/air_intake_flap.rs:21-31`; EGT del APS3200,
