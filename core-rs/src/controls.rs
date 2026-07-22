@@ -77,7 +77,8 @@ pub enum ControlGroup {
     Fuel,
     /// Motores (panel ENG: masters + selector de modo).
     Eng,
-    // Pneu... se añaden en fases posteriores.
+    /// Neumático (Fase 4, slice 5: selector X BLEED).
+    Pneu,
 }
 
 impl ControlGroup {
@@ -88,6 +89,7 @@ impl ControlGroup {
             ControlGroup::Apu => "APU",
             ControlGroup::Fuel => "FUEL",
             ControlGroup::Eng => "ENG",
+            ControlGroup::Pneu => "PNEU",
         }
     }
 }
@@ -296,6 +298,23 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Elec,
         domain: ControlDomain::Cockpit,
     },
+    // GEN 1 LINE (panel EMER ELEC, Fase 4 slice 5, D-021): pulsador real del
+    // overhead que el procedimiento SMOKE apaga para aislar la línea del GEN 1.
+    // El vendor lo construye `OnOffFaultPushButton::new_on(context,
+    // "EMER_ELEC_GEN_1_LINE")` (`a320_systems/src/electrical/mod.rs:391`) y
+    // `gen_1_provides_power` lo exige además del pulsador GEN 1
+    // (`electrical/alternating_current.rs:432-435`; el GEN 2 no tiene condición
+    // equivalente, `:436-438`). El runtime lo siembra a ON — su reposo real —
+    // porque el `seed()` del vendor no es accesible (D-007).
+    Control {
+        name: "gen_1_line",
+        lvar: "OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "GEN 1 LINE pushbutton (EMER ELEC panel, rests ON): 1 = ON (gen 1 line contactor may close), 0 = OFF (isolates generator 1, SMOKE procedure)",
+        group: ControlGroup::Elec,
+        domain: ControlDomain::Cockpit,
+    },
     Control {
         name: "ext_pwr_avail",
         lvar: "EXT_PWR_AVAIL:1",
@@ -396,6 +415,21 @@ pub const CATALOG: &[Control] = &[
         group: ControlGroup::Hyd,
         domain: ControlDomain::Cockpit,
     },
+    // Freno de parking (Fase 4, slice 5): palanca real de cabina que el
+    // controlador del PTU lee (`PARK_BRAKE_LEVER_POS`,
+    // `a320_systems/src/hydraulic/mod.rs:3448,3551`) — con un solo engine
+    // master ON en tierra, el PTU en AUTO solo queda habilitado con el freno
+    // suelto y sin bypass pin (`:3491-3497`). Sin seed: el default 0 (suelto)
+    // conserva el baseline de los slices previos; ver D-021.
+    Control {
+        name: "park_brake",
+        lvar: "PARK_BRAKE_LEVER_POS",
+        kind: ControlKind::Bool,
+        valid: ValidValues::Bool,
+        description: "Parking brake lever: 1 = set, 0 = released. With exactly one engine master ON on ground, setting it inhibits the PTU (single-engine-start inhibit)",
+        group: ControlGroup::Hyd,
+        domain: ControlDomain::Cockpit,
+    },
     // --- Panel APU (Fase 4, slice 2) ----------------------------------------
     Control {
         name: "apu_master",
@@ -460,6 +494,25 @@ pub const CATALOG: &[Control] = &[
         valid: ValidValues::Enum(&[0.0, 1.0, 2.0]),
         description: "Engine mode selector, one rotary selector for both engines: 0 = CRANK, 1 = NORM (rest position), 2 = IGN/START (arms the start when a master goes ON)",
         group: ControlGroup::Eng,
+        domain: ControlDomain::Cockpit,
+    },
+    // --- Panel neumático (Fase 4, slice 5) -----------------------------------
+    //
+    // Selector X BLEED: el vendor lo construye `CrossBleedValveSelectorKnob::
+    // new_auto` sobre el LVAR `KNOB_OVHD_AIRCOND_XBLEED_Position`
+    // (`fbw-common/.../pneumatic/mod.rs:462-470`), enum SHUT=0/AUTO=1/OPEN=2
+    // (`:487-491`). En AUTO, la válvula de crossbleed abre cuando abre la de
+    // APU bleed (`a320_systems/src/pneumatic.rs:986-1008`) — es lo que lleva
+    // aire del APU al starter del motor 2. El runtime lo siembra a AUTO (su
+    // reposo real; sin seed leería 0 = SHUT y el motor 2 jamás arrancaría con
+    // aire del APU). Ver D-021.
+    Control {
+        name: "xbleed",
+        lvar: "KNOB_OVHD_AIRCOND_XBLEED_Position",
+        kind: ControlKind::Enum,
+        valid: ValidValues::Enum(&[0.0, 1.0, 2.0]),
+        description: "Crossbleed valve selector (pneumatic panel, rests at AUTO): 0 = SHUT, 1 = AUTO (opens with the APU bleed valve), 2 = OPEN",
+        group: ControlGroup::Pneu,
         domain: ControlDomain::Cockpit,
     },
     // --- Fuel como estado de mundo (Fase 4, slice 3) -------------------------
@@ -608,6 +661,33 @@ mod tests {
         ] {
             assert!(by_name(name).is_some(), "falta el control '{name}'");
         }
+    }
+
+    /// D-021 (Fase 4, slice 5): el GEN 1 LINE es cabina real (panel EMER ELEC)
+    /// y escribe el LVAR del pulsador del vendor, no un nombre inventado.
+    #[test]
+    fn gen_1_line_is_a_cockpit_control_on_the_emer_elec_lvar() {
+        let c = by_name("gen_1_line").expect("falta el control 'gen_1_line'");
+        assert_eq!(c.lvar, "OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON");
+        assert_eq!(c.group, ControlGroup::Elec);
+        assert_eq!(c.domain, ControlDomain::Cockpit);
+    }
+
+    /// Slice 5 (#59): el selector X BLEED y el freno de parking quedan
+    /// catalogados con sus LVARs reales del vendor y sus posiciones exactas.
+    #[test]
+    fn catalog_covers_the_phase4_cross_system_controls() {
+        let xbleed = by_name("xbleed").expect("falta el control 'xbleed'");
+        assert_eq!(xbleed.lvar, "KNOB_OVHD_AIRCOND_XBLEED_Position");
+        assert_eq!(xbleed.group, ControlGroup::Pneu);
+        assert_eq!(xbleed.domain, ControlDomain::Cockpit);
+        // SHUT=0 / AUTO=1 / OPEN=2 (fbw-common/.../pneumatic/mod.rs:487-491).
+        assert_eq!(xbleed.valid, ValidValues::Enum(&[0.0, 1.0, 2.0]));
+
+        let brake = by_name("park_brake").expect("falta el control 'park_brake'");
+        assert_eq!(brake.lvar, "PARK_BRAKE_LEVER_POS");
+        assert_eq!(brake.group, ControlGroup::Hyd);
+        assert_eq!(brake.domain, ControlDomain::Cockpit);
     }
 
     #[test]
