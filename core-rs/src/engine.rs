@@ -35,8 +35,11 @@
 //!   temperatura/presión es ≈1; escribimos el mismo valor en ambas.
 //! - **Sin FADEC fino**: N1 y el empuje se derivan linealmente de N2 (solo
 //!   régimen de idle en tierra; no hay palanca en este slice).
-//! - **Sin gate de bleed**: v1 arranca con master + modo IGN/START sin exigir
-//!   presión neumática (el gate llega en el slice 5). `Restarting` y el modo
+//! - **Gate de bleed (slice 5, #59)**: el motoring exige aire real en el ducto
+//!   del starter — el flag `PNEU_ENG_{n}_STARTER_PRESSURIZED` que calcula el
+//!   neumático del vendor con histéresis (≥10 psi sobre ambiente para armarse,
+//!   <5 psi para caerse; `a320_systems/src/pneumatic.rs:1278-1288`, write en
+//!   `:1438-1441`). Ver [`EngineModel::integrate_n2`]. `Restarting` y el modo
 //!   CRANK (motoring sin ignición) quedan fuera de alcance.
 
 use std::time::Duration;
@@ -55,6 +58,19 @@ pub const MODE_SELECTOR_LVAR: &str = "TURB ENG IGNITION SWITCH EX1:1";
 /// MSFS el master vive en el fuel system C++). Ver D-020.
 pub fn master_lvar(number: usize) -> String {
     format!("ENG_MASTER_{number}")
+}
+
+/// LVAR del flag "hay aire para el starter", **output del vendor** (gate de
+/// bleed del slice 5, registrado en D-020): lo
+/// escribe `EngineBleedAirSystem` cada tick a partir de la presión real del
+/// contenedor del starter, con histéresis de 10/5 psi sobre ambiente
+/// (`a320_systems/src/pneumatic.rs:1278-1288`, write en `:1438-1441`). Headless
+/// la física es real: el ducto solo se presuriza si algo sopla aguas arriba
+/// (APU bleed a 50 psi con la turbina en marcha, `apu/aps3200.rs:422-425`) y la
+/// válvula de arranque abre — cosa que el vendor hace al leer nuestro
+/// `ENGINE_STATE = Starting` con N2 < 65 % (`pneumatic.rs:458-473`).
+pub fn starter_pressurized_lvar(number: usize) -> String {
+    format!("PNEU_ENG_{number}_STARTER_PRESSURIZED")
 }
 
 /// Interpreta el valor crudo del selector de modo.
@@ -92,6 +108,7 @@ pub struct EngineModel {
     corrected_n1_key: String,
     thrust_key: String,
     starter_key: String,
+    starter_pressurized_key: String,
     /// Estado FADEC del motor. Reutilizamos el enum del vendor para que los
     /// valores escritos en `ENGINE_STATE:{n}` no puedan divergir de los que
     /// sus consumidores esperan. `Restarting` no se produce nunca.
@@ -152,6 +169,7 @@ impl EngineModel {
             corrected_n1_key: format!("TURB ENG CORRECTED N1:{number}"),
             thrust_key: format!("TURB ENG JET THRUST:{number}"),
             starter_key: format!("GENERAL ENG STARTER ACTIVE:{number}"),
+            starter_pressurized_key: starter_pressurized_lvar(number),
             state: EngineState::Off,
             n2_percent: 0.0,
         }
@@ -178,9 +196,12 @@ impl EngineModel {
     pub fn update(&mut self, delta: Duration, store: &mut VariableStore) {
         let master_on = store.read_by_name(&self.master_key) != 0.0;
         let mode = mode_from(store.read_by_name(MODE_SELECTOR_LVAR));
+        // Output del vendor del tick anterior (el motor va antes de
+        // `simulation.tick`): ver el doc de `starter_pressurized_lvar`.
+        let starter_pressurized = store.read_by_name(&self.starter_pressurized_key) != 0.0;
 
         self.transition(master_on, mode);
-        self.integrate_n2(delta);
+        self.integrate_n2(delta, starter_pressurized);
 
         for (name, value) in self.simvar_writes(master_on) {
             store.write_by_name(&name, value);
@@ -221,13 +242,30 @@ impl EngineModel {
     /// `tau` constantes durante el tick, `n2(t+dt)` coincide con la solución
     /// continua muestreada — el resultado depende de `dt`, no del número de
     /// ticks intermedios dentro de un tramo.
-    fn integrate_n2(&mut self, delta: Duration) {
+    ///
+    /// ## Gate de bleed (slice 5, #59; ver D-020)
+    ///
+    /// El tramo de **motoring** (N2 < 25 %) es el starter neumático girando el
+    /// motor: sin aire en el ducto (`starter_pressurized` = 0) no hay par y el
+    /// N2 no sube — decae hacia 0 con la tau de spool-down. El estado sigue en
+    /// `Starting` (el FADEC mantiene la secuencia armada y la válvula abierta,
+    /// que es justo lo que permite que el ducto se presurice cuando el APU
+    /// bleed llega). Pasado el light-off (N2 ≥ 25 %) hay combustión y el motor
+    /// acelera solo: el gate ya no aplica — como el avión real, donde el
+    /// starter se corta y el arranque continúa autosostenido.
+    fn integrate_n2(&mut self, delta: Duration, starter_pressurized: bool) {
         let (target, tau_s) = match self.state {
             EngineState::Off | EngineState::Shutting => (0.0, Self::SPOOL_DOWN_TAU_S),
             EngineState::Starting | EngineState::Restarting
                 if self.n2_percent < Self::LIGHT_OFF_N2_PERCENT =>
             {
-                (Self::MOTORING_TARGET_N2_PERCENT, Self::MOTORING_TAU_S)
+                if starter_pressurized {
+                    (Self::MOTORING_TARGET_N2_PERCENT, Self::MOTORING_TAU_S)
+                } else {
+                    // Starter sin aire: el motor no gira (o pierde lo poco que
+                    // llevara girado si el bleed se cae a mitad de motoring).
+                    (0.0, Self::SPOOL_DOWN_TAU_S)
+                }
             }
             EngineState::Starting | EngineState::Restarting => {
                 (Self::ACCEL_TARGET_N2_PERCENT, Self::ACCEL_TAU_S)
@@ -289,6 +327,16 @@ mod tests {
         store.write_by_name(MODE_SELECTOR_LVAR, mode as u8 as f64);
     }
 
+    /// Simula el output del neumático del vendor "hay aire en el ducto del
+    /// starter" (en el runtime real lo escribe `EngineBleedAirSystem` cada
+    /// tick; aquí no hay avión, así que se escribe a mano).
+    fn set_starter_air(store: &mut VariableStore, number: usize, pressurized: bool) {
+        store.write_by_name(
+            &starter_pressurized_lvar(number),
+            if pressurized { 1.0 } else { 0.0 },
+        );
+    }
+
     #[test]
     fn off_and_untouched_nothing_moves() {
         let mut store = VariableStore::new();
@@ -337,6 +385,7 @@ mod tests {
         let mut engine = EngineModel::new(1);
         set_mode(&mut store, EngineModeSelector::Ignition);
         set_master(&mut store, 1, true);
+        set_starter_air(&mut store, 1, true);
 
         engine.update(DT, &mut store);
         assert_eq!(engine.state(), EngineState::Starting);
@@ -370,6 +419,7 @@ mod tests {
         let mut engine = EngineModel::new(2);
         set_mode(&mut store, EngineModeSelector::Ignition);
         set_master(&mut store, 2, true);
+        set_starter_air(&mut store, 2, true);
 
         run(&mut engine, &mut store, 80.0); // idle asentado
 
@@ -389,6 +439,7 @@ mod tests {
         let mut engine = EngineModel::new(1);
         set_mode(&mut store, EngineModeSelector::Ignition);
         set_master(&mut store, 1, true);
+        set_starter_air(&mut store, 1, true);
         run(&mut engine, &mut store, 10.0); // en pleno motoring
 
         set_master(&mut store, 1, false);
@@ -403,6 +454,7 @@ mod tests {
         let mut engine = EngineModel::new(1);
         set_mode(&mut store, EngineModeSelector::Ignition);
         set_master(&mut store, 1, true);
+        set_starter_air(&mut store, 1, true);
         run(&mut engine, &mut store, 80.0);
         assert_eq!(engine.state(), EngineState::On);
 
@@ -433,6 +485,7 @@ mod tests {
         let mut engine = EngineModel::new(1);
         set_mode(&mut store, EngineModeSelector::Ignition);
         set_master(&mut store, 1, true);
+        set_starter_air(&mut store, 1, true);
         run(&mut engine, &mut store, 10.0);
         assert_eq!(engine.state(), EngineState::Starting);
 
@@ -450,6 +503,7 @@ mod tests {
         let mut engine = EngineModel::new(1);
         set_mode(&mut store, EngineModeSelector::Ignition);
         set_master(&mut store, 1, true);
+        set_starter_air(&mut store, 1, true);
 
         run(&mut engine, &mut store, 8.0); // aún < 25 %: un solo tramo
         let expected = 30.0 * (1.0 - (-8.0f64 / 8.0).exp());
@@ -479,6 +533,51 @@ mod tests {
                 "simvar de motor no escrita cada tick: {key}"
             );
         }
+    }
+
+    /// Gate de bleed (slice 5, #59): sin aire en el ducto del starter la
+    /// secuencia se arma (`Starting`, y con ello la válvula del vendor abrirá)
+    /// pero el N2 no sube; cuando el aire llega, el motoring progresa; y si el
+    /// aire se cae a mitad de motoring, el N2 decae sin abortar la secuencia.
+    #[test]
+    fn without_starter_air_the_start_arms_but_n2_does_not_rise() {
+        let mut store = VariableStore::new();
+        let mut engine = EngineModel::new(1);
+        set_mode(&mut store, EngineModeSelector::Ignition);
+        set_master(&mut store, 1, true);
+        // Sin set_starter_air: el flag no escrito lee 0 = sin aire.
+
+        run(&mut engine, &mut store, 30.0);
+        assert_eq!(
+            engine.state(),
+            EngineState::Starting,
+            "la secuencia se arma"
+        );
+        assert_eq!(engine.n2_percent(), 0.0, "sin aire el starter no gira nada");
+
+        // Llega el aire (APU bleed en el runtime real): el motoring arranca.
+        set_starter_air(&mut store, 1, true);
+        run(&mut engine, &mut store, 5.0);
+        let n2_with_air = engine.n2_percent();
+        assert!(n2_with_air > 5.0, "con aire el N2 sube, fue {n2_with_air}");
+
+        // Se cae el aire en pleno motoring: decae, pero sigue en Starting.
+        set_starter_air(&mut store, 1, false);
+        run(&mut engine, &mut store, 5.0);
+        assert!(
+            engine.n2_percent() < n2_with_air,
+            "sin aire el N2 decae ({} >= {n2_with_air})",
+            engine.n2_percent()
+        );
+        assert_eq!(engine.state(), EngineState::Starting);
+
+        // Vuelve el aire y el arranque completa: el gate solo aplica al
+        // motoring, pasado el light-off la combustión sostiene sola.
+        set_starter_air(&mut store, 1, true);
+        run(&mut engine, &mut store, 30.0);
+        set_starter_air(&mut store, 1, false); // corte del starter, ya da igual
+        run(&mut engine, &mut store, 40.0);
+        assert_eq!(engine.state(), EngineState::On);
     }
 
     #[test]

@@ -100,6 +100,62 @@ const ENGINE_CONTROL_SEED: &[(&str, f64)] = &[
     (MODE_SELECTOR_LVAR, 1.0),
 ];
 
+/// Seed de **estados de reposo del panel** que el `seed()` del vendor
+/// materializaría y D-007 nos impide ejecutar. Escrito UNA vez en
+/// [`Runtime::new`] (mismo patrón que el selector de modo en
+/// [`ENGINE_CONTROL_SEED`]; ver D-021). Sin estos seeds, el LVAR no escrito lee
+/// 0.0, que en ambos casos significa algo distinto del reposo del panel real:
+///
+/// - **GEN 1 LINE** (panel EMER ELEC): el vendor lo construye
+///   `OnOffFaultPushButton::new_on(context, "EMER_ELEC_GEN_1_LINE")`
+///   (`a320_systems/src/electrical/mod.rs:391`) — reposo **ON** (solo se apaga
+///   en el procedimiento SMOKE). Sin seed, `gen_1_provides_power` — que exige
+///   `generator_1_line_is_on()` además del pulsador GEN 1
+///   (`electrical/alternating_current.rs:433-436`) — sería falso para siempre:
+///   el GEN 1 giraría a 115 V sin cerrar su contactor, con `ENG 1 GEN FAULT`
+///   en un avión sano. El GEN 2 no tiene condición equivalente (`:437-439`).
+/// - **Selector X BLEED** (panel neumático): el vendor lo construye
+///   `CrossBleedValveSelectorKnob::new_auto` con el LVAR
+///   `KNOB_OVHD_AIRCOND_XBLEED_Position`
+///   (`fbw-common/.../pneumatic/mod.rs:462-470`; enum SHUT=0/AUTO=1/OPEN=2,
+///   `:487-491`) — reposo **AUTO**. Sin seed leería 0 = **SHUT** y la válvula
+///   de crossbleed jamás abriría (en AUTO abre cuando abre la válvula de APU
+///   bleed, `a320_systems/src/pneumatic.rs:986-1008`): el motor 2 no podría
+///   arrancar nunca con aire del APU.
+/// - **Bombas EDP 1/2** (panel HYD): el vendor las construye
+///   `AutoOffFaultPushButton::new_auto(context, "HYD_ENG_{1,2}_PUMP")`
+///   (`a320_systems/src/hydraulic/mod.rs:4500-4501`) — reposo **AUTO**
+///   (pulsadores guardados; la tripulación no los toca en un arranque normal).
+///   Sin seed leerían 0 = OFF y un motor al ralentí no presurizaría su circuito
+///   hasta accionar un pulsador que en el avión real ya está en AUTO.
+///
+/// Todos siguen siendo accionables como controles del catálogo (`gen_1_line`,
+/// `xbleed`, `hyd_eng_{1,2}_pump`): el seed fija el reposo, no congela el
+/// valor. Deuda anotada en D-021: las bombas eléctricas azul/amarilla y el PTU
+/// también reposan en AUTO, pero su seed cambia escenarios de Fase 1-2 ya
+/// fijados (la amarilla invertida es la convención D-007 de los helpers) — se
+/// revisará con la secuencia end-to-end (#60).
+const PANEL_RESTING_SEED: &[(&str, f64)] = &[
+    ("OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON", 1.0),
+    ("KNOB_OVHD_AIRCOND_XBLEED_Position", 1.0),
+    ("OVHD_HYD_ENG_1_PUMP_PB_IS_AUTO", 1.0),
+    ("OVHD_HYD_ENG_2_PUMP_PB_IS_AUTO", 1.0),
+];
+
+/// Seed de **mundo**: no hay tug de pushback enganchado.
+///
+/// `PushbackTug` lee `PUSHBACK STATE` y trata **3 = sin pushback**; cualquier
+/// otro valor (incluido el 0.0 de una var no escrita: "pushback recto") cuenta
+/// como pushback en curso e inserta el bypass pin de la dirección del morro
+/// (`fbw-common/.../hydraulic/pushback.rs:24-31,60-69`). Con el pin insertado,
+/// el PTU en AUTO queda inhibido en tierra con un solo engine master ON — la
+/// rama `!parking_brake && !bypass_pin` de
+/// `A320PowerTransferUnitController::update`
+/// (`a320_systems/src/hydraulic/mod.rs:3491-3497`) nunca habilita. Es un seed y
+/// no entorno por el mismo motivo que el fuel (D-018): un escenario futuro de
+/// pushback debe poder escribirlo sin que el tick se lo machaque.
+const WORLD_STATE_SEED: &[(&str, f64)] = &[("PUSHBACK STATE", 3.0)];
+
 /// Runtime persistente del A320 headless.
 ///
 /// Instancia el avión una sola vez y lo tica repetidamente; el estado (y el
@@ -161,6 +217,12 @@ impl Runtime {
         // controles de cabina y los ticks no deben machacar lo que el caller
         // escriba después.
         for &(name, value) in ENGINE_CONTROL_SEED {
+            runtime.store.write_by_name(name, value);
+        }
+        // Siembra los reposos de panel (GEN 1 LINE a ON, X BLEED a AUTO) y el
+        // mundo sin tug de pushback — ver los docs de `PANEL_RESTING_SEED` /
+        // `WORLD_STATE_SEED` y D-021. Una sola escritura, como el resto.
+        for &(name, value) in PANEL_RESTING_SEED.iter().chain(WORLD_STATE_SEED) {
             runtime.store.write_by_name(name, value);
         }
         // Tick de inicialización con los controles en su default (todo OFF) para
@@ -481,6 +543,26 @@ mod tests {
             rt.read_by_name("FUEL TANK LEFT MAIN QUANTITY"),
             0.0,
             "el tick no debe reasentar el seed de combustible"
+        );
+    }
+
+    /// D-021: los reposos de panel (GEN 1 LINE ON, X BLEED AUTO) y el mundo sin
+    /// tug de pushback se siembran una vez — son los estados que el `seed()`
+    /// del vendor materializaría y D-007 nos impide ejecutar. Siguen siendo
+    /// escribibles: cambiarlos persiste entre ticks.
+    #[test]
+    fn panel_and_world_resting_seeds_read_their_resting_values() {
+        let mut rt = Runtime::apron_cold_and_dark();
+        assert_eq!(rt.read_by_name("OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON"), 1.0);
+        assert_eq!(rt.read_by_name("KNOB_OVHD_AIRCOND_XBLEED_Position"), 1.0);
+        assert_eq!(rt.read_by_name("PUSHBACK STATE"), 3.0);
+
+        rt.write_by_name("OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON", 0.0);
+        rt.run(2.0, 5.0);
+        assert_eq!(
+            rt.read_by_name("OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON"),
+            0.0,
+            "el tick no debe reasentar el seed del GEN 1 LINE"
         );
     }
 
