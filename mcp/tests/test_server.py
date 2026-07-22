@@ -43,8 +43,8 @@ def run(coro):
     return asyncio.run(coro)
 
 
-async def _session(fn):
-    async with stdio_client(SERVER) as (read, write):
+async def _session(fn, server=SERVER):
+    async with stdio_client(server) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             return await fn(session)
@@ -160,6 +160,59 @@ def test_reading_state_and_advancing_time():
     assert "t=3.0s" in advanced, advanced
     assert state["ELEC_DC_BAT_BUS_IS_POWERED"] == 1.0, "batteries should power the DC BAT bus"
     assert state["ELEC_AC_1_BUS_IS_POWERED"] == 0.0, "no AC source yet"
+
+
+# --- start states -----------------------------------------------------------
+def test_engines_running_start_state_hands_over_a_healthy_aircraft():
+    """`--start engines-running` delivers the Phase 4 closing state (#60).
+
+    The harness runs the whole cold & dark -> engines running sequence before
+    serving (the scenario is the setup, not the agent's task, D-017), so the
+    agent's first observation is a healthy aircraft: both engines at idle, the
+    AC network on the engine generators, all three hydraulic circuits
+    pressurized, the APU shut down, and a clean ECAM. This mirrors the core's
+    closing integration test (core-rs/tests/cold_dark_to_engines_running.rs)
+    over the real protocol.
+    """
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "a320_mcp", "--start", "engines-running"],
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
+
+    async def check(session):
+        state = await session.call_tool(
+            "read_state",
+            {
+                "variables": [
+                    "ENGINE_STATE:1",
+                    "ENGINE_STATE:2",
+                    "ELEC_AC_1_BUS_IS_POWERED",
+                    "ELEC_AC_2_BUS_IS_POWERED",
+                    "HYD_GREEN_SYSTEM_1_SECTION_PRESSURE",
+                    "HYD_YELLOW_SYSTEM_1_SECTION_PRESSURE",
+                    "HYD_BLUE_SYSTEM_1_SECTION_PRESSURE",
+                    "OVHD_APU_START_PB_IS_AVAILABLE",
+                ]
+            },
+        )
+        ecam = await session.call_tool("read_ecam", {})
+        return state.structuredContent, ecam
+
+    state, ecam = run(_session(check, server))
+
+    assert state["ENGINE_STATE:1"] == 1.0, "engine 1 should be running (On)"
+    assert state["ENGINE_STATE:2"] == 1.0, "engine 2 should be running (On)"
+    assert state["ELEC_AC_1_BUS_IS_POWERED"] == 1.0, "AC 1 should be on GEN 1"
+    assert state["ELEC_AC_2_BUS_IS_POWERED"] == 1.0, "AC 2 should be on GEN 2"
+    for circuit in ("GREEN", "YELLOW", "BLUE"):
+        psi = state[f"HYD_{circuit}_SYSTEM_1_SECTION_PRESSURE"]
+        assert 2800 <= psi <= 3100, f"{circuit} should be at nominal pressure, got {psi}"
+    assert state["OVHD_APU_START_PB_IS_AVAILABLE"] == 0.0, "the APU should be shut down"
+
+    warnings = (ecam.structuredContent or {}).get("result", [])
+    assert warnings == [], f"a healthy aircraft should have a clean ECAM: {warnings}"
+    assert "FAULT" not in _text(ecam), _text(ecam)
 
 
 # --- errors and bounds ------------------------------------------------------

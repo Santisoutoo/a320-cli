@@ -88,6 +88,14 @@ of seconds before judging the result.
 Discovery: `list_controls` for what you can actuate, `list_failures` for what \
 can be broken, and `snapshot` with a filter for the readable state variables \
 (there is no tool that lists them all — the list is hundreds long).
+
+Rules of thumb for this aircraft: the APU takes ~60 s of simulated time to \
+reach AVAIL, and an engine start takes ~55 s once its starter has bleed air \
+(APU bleed for the first engine, the crossbleed for the second). The bus tie \
+must be on for the APU generator or external power to feed the whole AC \
+network. Engines are commanded from the panel: `eng_mode` to 2 (IGN/START), \
+then `eng_master_1`/`eng_master_2` to 1; `eng_mode` back to 1 (NORM) after \
+start.
 """
 
 mcp = FastMCP("a320-systems", instructions=INSTRUCTIONS)
@@ -293,6 +301,24 @@ def clear_failure(failure_id: FailureId) -> str:
 
 
 # --- start states -----------------------------------------------------------
+def _run_until(
+    sim: "a320_sim.Sim", variable: str, target: float, timeout_s: int, what: str
+) -> None:
+    """Advance in 1 s steps until `variable` reads exactly `target` (bounded).
+
+    For flags and enums the sim writes exact values, so `!=` is safe. Same
+    pattern as `run_until` in the core's integration tests: never a blind
+    sleep, never unbounded — a start state that cannot be reached is a bug and
+    should fail loudly at server startup, not hand the agent a broken aircraft.
+    """
+    elapsed = 0
+    while sim.get([variable])[variable] != target:
+        sim.run(1.0, 10.0)
+        elapsed += 1
+        if elapsed >= timeout_s:
+            raise RuntimeError(f"{what} in {timeout_s} s of simulation")
+
+
 def _start_apu_running(sim: "a320_sim.Sim") -> None:
     """Leave the aircraft with the APU running and feeding the AC network.
 
@@ -317,21 +343,72 @@ def _start_apu_running(sim: "a320_sim.Sim") -> None:
     sim.set("apu_start", 1)
 
     # Bounded wait, not a blind sleep: the APS3200 reaches available at ~62 s.
-    elapsed = 0
-    while sim.get(["OVHD_APU_START_PB_IS_AVAILABLE"])["OVHD_APU_START_PB_IS_AVAILABLE"] == 0.0:
-        sim.run(1.0, 10.0)
-        elapsed += 1
-        if elapsed >= 150:
-            raise RuntimeError("the APU did not reach available in 150 s of simulation")
+    _run_until(
+        sim, "OVHD_APU_START_PB_IS_AVAILABLE", 1.0, 150, "the APU did not reach available"
+    )
 
     sim.set("apu_gen", 1)
     sim.set("bus_tie", 1)
     sim.run(5.0, 5.0)
 
 
+def _start_engines_running(sim: "a320_sim.Sim") -> None:
+    """Leave the aircraft with both engines at idle powering everything.
+
+    The full Phase 4 sequence, cold & dark -> engines running, mirroring the
+    core's closing integration test (``core-rs/tests/
+    cold_dark_to_engines_running.rs``): batteries, APU + APU GEN + bus tie,
+    APU bleed, engine 1 (IGN/START + master, ~55 s, then GEN 1), engine 2 off
+    the crossbleed, then back to NORM with the APU shut down. Hands the agent a
+    healthy aircraft: AC network on the engine generators, green/yellow at
+    ~3000 psi from the engine pumps, blue from its AUTO electric pump, clean
+    ECAM. Takes ~6 min of simulated time at startup (fast wall-clock).
+    """
+    # Panel resting states the runtime does not seed yet (D-021 debt): park the
+    # yellow electric pump in AUTO (inverted control, D-007), blue pump AUTO
+    # (runs by itself with an engine running), PTU AUTO.
+    sim.set("hyd_epump_yellow", 1)
+    sim.set("hyd_epump_blue", 1)
+    sim.set("hyd_ptu", 1)
+
+    # Batteries, APU running, APU GEN + bus tie feeding the AC network.
+    _start_apu_running(sim)
+
+    # Air for the start: APU bleed (the crossbleed, resting in AUTO, will feed
+    # engine 2's starter from the same source).
+    sim.set("apu_bleed", 1)
+    sim.run(2.0, 5.0)
+
+    # Engine 1: IGN/START + master, bounded wait to idle, then its generator.
+    sim.set("eng_mode", 2)
+    sim.set("eng_master_1", 1)
+    # ENGINE_STATE: Off=0 / On=1 / Starting=2 — wait for On, not merely non-zero.
+    _run_until(sim, "ENGINE_STATE:1", 1.0, 120, "engine 1 did not reach idle")
+    sim.set("gen_1", 1)
+    sim.run(2.0, 5.0)
+
+    # Engine 2 off the crossbleed, then its generator.
+    sim.set("eng_master_2", 1)
+    _run_until(sim, "ENGINE_STATE:2", 1.0, 120, "engine 2 did not reach idle")
+    sim.set("gen_2", 1)
+    sim.run(2.0, 5.0)
+
+    # Clean up: mode back to NORM, APU no longer needed. The APU shutdown is
+    # orderly (bleed cooldown + spool-down, ~2 min): wait for AVAIL to retire
+    # so the agent starts with a clean ECAM, not a stale APU AVAIL memo.
+    sim.set("eng_mode", 1)
+    sim.set("apu_bleed", 0)
+    sim.set("apu_gen", 0)
+    sim.set("apu_master", 0)
+    sim.run(5.0, 5.0)
+    _run_until(sim, "OVHD_APU_START_PB_IS_AVAILABLE", 0.0, 300, "the APU did not shut down")
+    sim.run(5.0, 5.0)
+
+
 START_STATES = {
     "cold-dark": lambda sim: None,  # the default: Sim() is already cold & dark
     "apu-running": _start_apu_running,
+    "engines-running": _start_engines_running,
 }
 
 
@@ -347,8 +424,9 @@ def main(argv: "list[str] | None" = None) -> int:
         default="cold-dark",
         help=(
             "aircraft state to hand the agent (default: cold-dark). "
-            "'apu-running' boots the APU and puts it on the AC network, which "
-            "takes ~60 s of simulation at startup."
+            "'apu-running' boots the APU and puts it on the AC network (~60 s "
+            "of simulation at startup); 'engines-running' runs the full "
+            "cold & dark -> engines running sequence (~6 min of simulation)."
         ),
     )
     args = parser.parse_args(argv)
