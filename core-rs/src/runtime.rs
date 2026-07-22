@@ -122,12 +122,24 @@ const ENGINE_CONTROL_SEED: &[(&str, f64)] = &[
 ///   de crossbleed jamás abriría (en AUTO abre cuando abre la válvula de APU
 ///   bleed, `a320_systems/src/pneumatic.rs:986-1008`): el motor 2 no podría
 ///   arrancar nunca con aire del APU.
+/// - **Bombas EDP 1/2** (panel HYD): el vendor las construye
+///   `AutoOffFaultPushButton::new_auto(context, "HYD_ENG_{1,2}_PUMP")`
+///   (`a320_systems/src/hydraulic/mod.rs:4500-4501`) — reposo **AUTO**
+///   (pulsadores guardados; la tripulación no los toca en un arranque normal).
+///   Sin seed leerían 0 = OFF y un motor al ralentí no presurizaría su circuito
+///   hasta accionar un pulsador que en el avión real ya está en AUTO.
 ///
-/// Ambos siguen siendo accionables como controles del catálogo (`gen_1_line`,
-/// `xbleed`): el seed fija el reposo, no congela el valor.
+/// Todos siguen siendo accionables como controles del catálogo (`gen_1_line`,
+/// `xbleed`, `hyd_eng_{1,2}_pump`): el seed fija el reposo, no congela el
+/// valor. Deuda anotada en D-021: las bombas eléctricas azul/amarilla y el PTU
+/// también reposan en AUTO, pero su seed cambia escenarios de Fase 1-2 ya
+/// fijados (la amarilla invertida es la convención D-007 de los helpers) — se
+/// revisará con la secuencia end-to-end (#60).
 const PANEL_RESTING_SEED: &[(&str, f64)] = &[
     ("OVHD_EMER_ELEC_GEN_1_LINE_PB_IS_ON", 1.0),
     ("KNOB_OVHD_AIRCOND_XBLEED_Position", 1.0),
+    ("OVHD_HYD_ENG_1_PUMP_PB_IS_AUTO", 1.0),
+    ("OVHD_HYD_ENG_2_PUMP_PB_IS_AUTO", 1.0),
 ];
 
 /// Seed de **mundo**: no hay tug de pushback enganchado.
