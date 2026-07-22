@@ -31,7 +31,7 @@ launches it and talks over the pipe.
 
 `--start apu-running` takes ~60 s of *simulated* time at boot (a few seconds of
 wall clock) to spin the APU up before serving; `--start engines-running` runs
-the full cold & dark → engines running sequence (~5 min simulated: APU, APU
+the full cold & dark → engines running sequence (~6 min simulated: APU, APU
 bleed, both engine starts, APU shutdown) and hands over a healthy aircraft on
 its engine generators with a clean ECAM. The scenario is the harness's job, not
 the agent's.

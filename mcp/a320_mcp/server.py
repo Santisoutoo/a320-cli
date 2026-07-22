@@ -25,6 +25,7 @@ Design notes
 
 import argparse
 import sys
+from collections.abc import Callable
 from typing import Literal
 
 try:
@@ -408,7 +409,7 @@ def _start_engines_running(sim: "a320_sim.Sim") -> None:
     sim.run(5.0, 5.0)
 
 
-START_STATES = {
+START_STATES: "dict[str, Callable[[a320_sim.Sim], None]]" = {
     "cold-dark": lambda sim: None,  # the default: Sim() is already cold & dark
     "apu-running": _start_apu_running,
     "engines-running": _start_engines_running,
