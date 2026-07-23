@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a320-bench"
+version = "0.1.0"
+description = "Phase 5 benchmark harness: scenario suite, episode runner and trajectory recording over the a320 MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+# Table form, not the PEP 639 bare string: the string form needs setuptools>=77,
+# which would contradict the >=61 floor above. Same style as mcp/pyproject.toml.
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    # Not on PyPI: pip install -e bindings/ and -e mcp/ first.
+    "a320-sim",
+    "a320-mcp",
+    "mcp>=1.28,<2",
+    "PyYAML>=6",
+    "jsonschema>=4",
+]
+
+[project.optional-dependencies]
+# Real LLM providers (slice D). CI installs without this extra: every test
+# runs against the ScriptedAdapter, no network, no keys.
+providers = []
+
+[tool.setuptools.packages.find]
+include = ["a320_bench*"]

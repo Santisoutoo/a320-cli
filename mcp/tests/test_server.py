@@ -87,6 +87,74 @@ def test_the_agent_cannot_see_the_ground_truth():
     assert "list_variables" not in names, "exposing list_variables floods the context window"
 
 
+def test_benchmark_profile_withholds_failure_tools_and_adds_report_done():
+    """The benchmark tool surface is the graded agent's surface (#68).
+
+    `inject_failure`/`clear_failure` must not exist there: the injected failure
+    is the exam, and an agent that can repair the fault (or break something
+    else) is not flying the procedure. `report_done` is the explicit
+    end-of-episode channel the runner watches for. Checked in-process because
+    the benchmark server is built by the Phase 5 runner, not by the stdio
+    entry point.
+    """
+    import a320_sim
+    from a320_mcp.server import create_server
+
+    server = create_server(a320_sim.Sim(), profile="benchmark")
+
+    async def check():
+        names = {t.name for t in await server.list_tools()}
+        ack = await server.call_tool("report_done", {"diagnosis": "x", "actions_summary": "y"})
+        return names, ack
+
+    names, ack = run(check())
+
+    expected = (EXPECTED_TOOLS - {"inject_failure", "clear_failure"}) | {"report_done"}
+    assert names == expected, f"benchmark surface drifted: {names ^ expected}"
+    assert "episode is over" in str(ack), ack
+
+
+def test_interactive_profile_is_the_default_and_rejects_unknown_profiles():
+    """`create_server` defaults to the stdio surface; a typo'd profile fails loudly."""
+    import a320_sim
+    from a320_mcp.server import create_server
+
+    server = create_server(a320_sim.Sim())
+
+    async def check():
+        return {t.name for t in await server.list_tools()}
+
+    names = run(check())
+    assert names == EXPECTED_TOOLS, f"interactive surface drifted: {names ^ EXPECTED_TOOLS}"
+
+    try:
+        create_server(a320_sim.Sim(), profile="benchmrak")
+    except ValueError as exc:
+        assert "benchmrak" in str(exc)
+    else:
+        raise AssertionError("an unknown profile should raise ValueError")
+
+
+def test_instructions_profiles_are_wired_to_the_profile():
+    """Each profile gets its INSTRUCTIONS variant unless one is passed explicitly.
+
+    The instructions are prompt engineering and a Phase 5 ablation axis: the
+    benchmark variant must tell the agent about `report_done`, and an explicit
+    `instructions=` must win over the profile default (that is how ablations
+    swap the text without touching the tool surface).
+    """
+    import a320_sim
+    from a320_mcp.server import INSTRUCTIONS, create_server
+
+    interactive = create_server(a320_sim.Sim())
+    benchmark = create_server(a320_sim.Sim(), profile="benchmark")
+    overridden = create_server(a320_sim.Sim(), profile="benchmark", instructions="ablated")
+
+    assert interactive.instructions == INSTRUCTIONS
+    assert "report_done" in benchmark.instructions
+    assert overridden.instructions == "ablated"
+
+
 def test_schemas_carry_the_catalogs_as_enums():
     """The valid names are generated from the catalogs, not hand-written (D-017).
 

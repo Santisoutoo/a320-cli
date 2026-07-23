@@ -88,6 +88,14 @@ agent the answer it is supposed to diagnose from the ECAM; the second would bury
 the context window under hundreds of names. See D-016 in
 [docs/decisiones.md](../docs/decisiones.md).
 
+**Tool profiles.** The table above is the `interactive` profile — what the stdio
+entry point serves. The server is built by `create_server(sim, profile=...)`;
+the Phase 5 benchmark runner builds one with `profile="benchmark"`, which
+withholds `inject_failure`/`clear_failure` (the injected failure is the exam —
+an agent that can repair the fault is not flying the procedure) and adds
+`report_done(diagnosis, actions_summary)` as the explicit end-of-episode
+channel. Profiles change which tools exist, never what a tool does.
+
 ## Worked example: the agent loop
 
 What a client sees driving the `apu-running` scenario:
