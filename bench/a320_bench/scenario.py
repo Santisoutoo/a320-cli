@@ -162,15 +162,16 @@ def evaluate_predicate(pred: Predicate, value: float) -> bool:
 
 # --- catalogs (cached: building a Sim costs ~1 s) ------------------------------
 @functools.lru_cache(maxsize=1)
-def _catalogs() -> tuple[dict[str, str], frozenset[str], frozenset[str]]:
-    """(control name -> domain, failure ids, START_STATES keys), from the live core."""
+def _catalogs() -> tuple[dict[str, str], frozenset[str], frozenset[str], frozenset[str]]:
+    """(control name -> domain, failure ids, START_STATES keys, instructions
+    profiles), from the live core and the MCP server module."""
     import a320_sim
-    from a320_mcp.server import START_STATES
+    from a320_mcp.server import INSTRUCTIONS_PROFILES, START_STATES
 
     sim = a320_sim.Sim()
     domains = {c["name"]: c["domain"] for c in sim.list_controls()}
     failures = frozenset(f["id"] for f in sim.list_failures())
-    return domains, failures, frozenset(START_STATES)
+    return domains, failures, frozenset(START_STATES), frozenset(INSTRUCTIONS_PROFILES)
 
 
 # --- loading -------------------------------------------------------------------
@@ -302,12 +303,19 @@ def load_scenario(path: "str | Path", *, check_catalogs: bool = True) -> Scenari
 
 def _cross_check(scenario: Scenario, path: Path) -> None:
     """Every reference must exist in the live catalogs — fail at load, not mid-episode."""
-    domains, failure_ids, start_states = _catalogs()
+    domains, failure_ids, start_states, instructions_profiles = _catalogs()
 
     if scenario.initial_state.start not in start_states:
         raise ScenarioError(
             f"{path}: unknown start state '{scenario.initial_state.start}' "
             f"(expected one of {sorted(start_states)})"
+        )
+
+    if scenario.instructions_profile not in instructions_profiles:
+        raise ScenarioError(
+            f"{path}: unknown instructions_profile '{scenario.instructions_profile}' "
+            f"(expected one of {sorted(instructions_profiles)}; see "
+            f"a320_mcp.server.INSTRUCTIONS_PROFILES)"
         )
 
     for failure in scenario.failures:
