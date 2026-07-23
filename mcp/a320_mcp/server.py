@@ -21,12 +21,20 @@ Design notes
 - **Tool descriptions are the agent's only documentation of an aircraft it
   cannot see.** They are prompt engineering, not docstrings — and in Phase 5
   they are an ablation axis. Written accordingly.
+- **The server is a factory, and the tool surface is a profile.** ``create_server``
+  builds a ``FastMCP`` over a given ``Sim``. The ``interactive`` profile is the
+  full 9-tool surface a human or an exploring agent gets over stdio. The
+  ``benchmark`` profile is what a *graded* agent gets: ``inject_failure`` and
+  ``clear_failure`` are withheld (the injected failure is the exam — an agent
+  that can repair the fault, or break something else, is not flying the
+  procedure) and ``report_done`` is added as the explicit end-of-episode
+  channel. Profiles change which tools exist, never what a tool does.
 """
 
 import argparse
 import sys
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, get_args
 
 try:
     import a320_sim
@@ -44,11 +52,13 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 # --- the aircraft -----------------------------------------------------------
-# One Sim per process. stdio means one client per process, and every tool call
-# lands on the same (event loop) thread, which is what `unsendable` requires.
+# One Sim per process for the stdio path. stdio means one client per process,
+# and every tool call lands on the same (event loop) thread, which is what
+# `unsendable` requires. The benchmark runner instead builds its own Sim per
+# episode and passes it to `create_server`.
 #
 # It is built at import, not in main(), because the tool schemas below embed the
-# catalogs as enums and decorators run at import time. Cost: ~1 s to instantiate
+# catalogs as enums and those are read once at import. Cost: ~1 s to instantiate
 # the A320. It would be paid at startup regardless.
 _sim = a320_sim.Sim()
 
@@ -59,7 +69,9 @@ _FAILURES = _sim.list_failures()
 # That is the curated half of discovery doing its job (D-009): the agent actuates
 # cockpit controls a human curated, and cannot reach an arbitrary variable. If a
 # scenario needs a control that isn't here, the fix is to catalog it in
-# core-rs/src/controls.rs, not to widen this enum.
+# core-rs/src/controls.rs, not to widen this enum. The catalogs are static
+# tables of the core, identical for every Sim instance, so reading them from
+# the module-level Sim is safe for servers built over a different instance.
 ControlName = Literal[tuple(sorted(c["name"] for c in _CONTROLS))]  # type: ignore[valid-type]
 FailureId = Literal[tuple(sorted(f["id"] for f in _FAILURES))]  # type: ignore[valid-type]
 
@@ -102,210 +114,278 @@ half-open valve can settle below its pressurization threshold and stall that \
 start attempt (recover by cycling the master).
 """
 
-mcp = FastMCP("a320-systems", instructions=INSTRUCTIONS)
+INSTRUCTIONS_BENCHMARK = (
+    INSTRUCTIONS
+    + """
+You are managing a failure that has already occurred. Diagnose it from the \
+ECAM and the state, apply the appropriate procedure with `set_control` and \
+`advance`, and when you judge the situation handled — or conclude that nothing \
+more can be done — call `report_done` with your diagnosis and a summary of the \
+actions you took. Make no further tool calls after `report_done`.
+"""
+)
 
-# Every tool below is closed-world: the simulator is self-contained, and saying
-# so keeps a client from treating these as calls out to the internet.
+# The instructions are prompt engineering, not documentation (see the module
+# docstring), and in Phase 5 they are an ablation axis: the runner picks a
+# variant by name and records which one the agent saw.
+INSTRUCTIONS_PROFILES: "dict[str, str]" = {
+    "default": INSTRUCTIONS,
+    "benchmark": INSTRUCTIONS_BENCHMARK,
+}
+
+# Every tool is closed-world: the simulator is self-contained, and saying so
+# keeps a client from treating these as calls out to the internet.
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
+# The static type and the runtime check share one source of truth: the tuple
+# used in the error message is derived from the Literal.
+Profile = Literal["interactive", "benchmark"]
+PROFILES: "tuple[str, ...]" = get_args(Profile)
 
-# --- observation ------------------------------------------------------------
-@mcp.tool(annotations=_READ_ONLY)
-def read_ecam() -> list[dict[str, str]]:
-    """Read the active ECAM warnings and cautions, most severe first.
 
-    This is what a pilot sees and reasons from, and it is your main source of
-    truth about what is wrong. Each entry has: `message` (the ECAM text, e.g.
-    "APU GEN FAULT"), `severity` (warning > caution > advisory), `system`, `id`,
-    and `source`.
+def create_server(
+    sim: "a320_sim.Sim",
+    *,
+    instructions: "str | None" = None,
+    profile: Profile = "interactive",
+) -> FastMCP:
+    """Build a FastMCP server whose tools drive `sim`.
 
-    `source` says who computed the warning: `vendor_flag` means the aircraft
-    model itself raised the fault; `derived` means it was inferred from the
-    aircraft's state. Both are real; the distinction is recorded for honesty.
+    `profile` selects the tool surface: ``interactive`` (the default) is the
+    full 9-tool surface served over stdio; ``benchmark`` withholds
+    ``inject_failure``/``clear_failure`` and adds ``report_done``. When
+    `instructions` is None, the profile's default variant from
+    ``INSTRUCTIONS_PROFILES`` is used (``interactive`` -> ``default``).
 
-    An empty list means the ECAM is clear. It is also empty when the ECAM is
-    not powered (cold and dark) — with no electrical power there is no display,
-    just as on the real aircraft. So an empty ECAM on an unpowered aircraft is
-    not evidence that nothing is wrong.
+    Tool functions are sync closures over `sim` — see the module docstring for
+    why sync is load-bearing (`unsendable`, D-010/D-015).
     """
-    return _sim.read_ecam()
+    if profile not in PROFILES:
+        raise ValueError(f"unknown profile '{profile}' (expected one of {PROFILES})")
+    if instructions is None:
+        instructions = INSTRUCTIONS_PROFILES["benchmark" if profile == "benchmark" else "default"]
 
+    server = FastMCP("a320-systems", instructions=instructions)
 
-@mcp.tool(annotations=_READ_ONLY)
-def read_state(variables: list[str]) -> dict[str, float]:
-    """Read specific state variables by name, e.g. `ELEC_AC_1_BUS_IS_POWERED`.
+    # --- observation ---------------------------------------------------------
+    @server.tool(annotations=_READ_ONLY)
+    def read_ecam() -> list[dict[str, str]]:
+        """Read the active ECAM warnings and cautions, most severe first.
 
-    Takes a list and returns a name -> value map. Booleans come back as 1.0 or
-    0.0. Ask only for what you need: this is the precise instrument, not a dump.
+        This is what a pilot sees and reasons from, and it is your main source of
+        truth about what is wrong. Each entry has: `message` (the ECAM text, e.g.
+        "APU GEN FAULT"), `severity` (warning > caution > advisory), `system`, `id`,
+        and `source`.
 
-    Use `snapshot` with a filter to discover which variable names exist, and
-    `list_controls` to see the variables you can write (each control lists its
-    underlying `lvar`). An unknown name is an error naming the offender, so a
-    typo fails loudly rather than reading as 0.
-    """
-    return _sim.get(variables)
+        `source` says who computed the warning: `vendor_flag` means the aircraft
+        model itself raised the fault; `derived` means it was inferred from the
+        aircraft's state. Both are real; the distinction is recorded for honesty.
 
+        An empty list means the ECAM is clear. It is also empty when the ECAM is
+        not powered (cold and dark) — with no electrical power there is no display,
+        just as on the real aircraft. So an empty ECAM on an unpowered aircraft is
+        not evidence that nothing is wrong.
+        """
+        return sim.read_ecam()
 
-@mcp.tool(annotations=_READ_ONLY)
-def snapshot(contains: str) -> dict[str, float]:
-    """Discover state variables whose name contains `contains` (case-sensitive).
+    @server.tool(annotations=_READ_ONLY)
+    def read_state(variables: list[str]) -> dict[str, float]:
+        """Read specific state variables by name, e.g. `ELEC_AC_1_BUS_IS_POWERED`.
 
-    This is how you find out what is observable — there is deliberately no tool
-    that lists every variable, because the registry runs to hundreds of names
-    and would bury the useful ones.
+        Takes a list and returns a name -> value map. Booleans come back as 1.0 or
+        0.0. Ask only for what you need: this is the precise instrument, not a dump.
 
-    Filter by system prefix and narrow from there: `ELEC_AC` for the AC network,
-    `ELEC_DC` for DC, `OVHD_ELEC` for the electrical overhead panel, `APU` for
-    the APU. A filter that matches too much is rejected — narrow it rather than
-    reading everything.
-    """
-    matches = {k: v for k, v in _sim.snapshot().items() if contains in k}
-    if not matches:
-        raise ToolError(
-            f"no variable name contains '{contains}'. Try a broader or different "
-            f"filter (e.g. 'ELEC_AC', 'ELEC_DC', 'OVHD_ELEC', 'APU')."
+        Use `snapshot` with a filter to discover which variable names exist, and
+        `list_controls` to see the variables you can write (each control lists its
+        underlying `lvar`). An unknown name is an error naming the offender, so a
+        typo fails loudly rather than reading as 0.
+        """
+        return sim.get(variables)
+
+    @server.tool(annotations=_READ_ONLY)
+    def snapshot(contains: str) -> dict[str, float]:
+        """Discover state variables whose name contains `contains` (case-sensitive).
+
+        This is how you find out what is observable — there is deliberately no tool
+        that lists every variable, because the registry runs to hundreds of names
+        and would bury the useful ones.
+
+        Filter by system prefix and narrow from there: `ELEC_AC` for the AC network,
+        `ELEC_DC` for DC, `OVHD_ELEC` for the electrical overhead panel, `APU` for
+        the APU. A filter that matches too much is rejected — narrow it rather than
+        reading everything.
+        """
+        matches = {k: v for k, v in sim.snapshot().items() if contains in k}
+        if not matches:
+            raise ToolError(
+                f"no variable name contains '{contains}'. Try a broader or different "
+                f"filter (e.g. 'ELEC_AC', 'ELEC_DC', 'OVHD_ELEC', 'APU')."
+            )
+        if len(matches) > MAX_SNAPSHOT_VARS:
+            raise ToolError(
+                f"filter '{contains}' matches {len(matches)} variables (max "
+                f"{MAX_SNAPSHOT_VARS}). Narrow it — e.g. '{contains}_' or a more "
+                f"specific prefix — or read the ones you need with read_state."
+            )
+        return matches
+
+    # --- discovery -----------------------------------------------------------
+    @server.tool(annotations=_READ_ONLY)
+    def list_controls() -> list[dict[str, str]]:
+        """List the cockpit controls you can actuate with `set_control`.
+
+        Curated by hand, not a dump of the variable registry. Each entry has: `name`
+        (what you pass to `set_control`), `lvar` (the underlying variable, readable
+        with `read_state`), `kind`, `valid_values`, `description`, `group`, and
+        `domain`.
+
+        `domain` is worth reading: `cockpit` is a real control a pilot actuates;
+        `world` is outside state that a real simulator would provide and that we
+        fake here (e.g. whether a ground power unit is plugged in).
+        """
+        return _CONTROLS
+
+    @server.tool(annotations=_READ_ONLY)
+    def list_failures() -> list[dict[str, str]]:
+        """List the failures that can be injected with `inject_failure`.
+
+        Each entry has a stable `id` (e.g. `elec.tr.1`), a `description`, a `group`,
+        and `ata` (the ATA chapter id the aircraft vendor uses for the same failure).
+
+        This is the catalog of what *can* break — not what *is* broken. To find out
+        what is currently wrong, read the ECAM.
+        """
+        return _FAILURES
+
+    # --- action --------------------------------------------------------------
+    @server.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,  # additive: it sets a switch, it destroys nothing
+            idempotentHint=True,  # writing the same value twice is the same state
+            openWorldHint=False,
         )
-    if len(matches) > MAX_SNAPSHOT_VARS:
-        raise ToolError(
-            f"filter '{contains}' matches {len(matches)} variables (max "
-            f"{MAX_SNAPSHOT_VARS}). Narrow it — e.g. '{contains}_' or a more "
-            f"specific prefix — or read the ones you need with read_state."
+    )
+    def set_control(control: ControlName, value: float) -> str:
+        """Actuate a cockpit control: flip a switch or push a pushbutton.
+
+        `control` is a name from `list_controls`; `value` is 1 for on/auto and 0 for
+        off (see each control's `valid_values`). An out-of-range value is rejected
+        rather than silently coerced.
+
+        The write lands immediately, but the aircraft does not react until time
+        passes: call `advance` afterwards, then read the state back to confirm.
+        """
+        sim.set(control, value)
+        return f"{control} <- {value:g} (call advance() for the aircraft to react)"
+
+    @server.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,  # time moves: the same call twice is not the same
+            openWorldHint=False,
         )
-    return matches
-
-
-# --- discovery --------------------------------------------------------------
-@mcp.tool(annotations=_READ_ONLY)
-def list_controls() -> list[dict[str, str]]:
-    """List the cockpit controls you can actuate with `set_control`.
-
-    Curated by hand, not a dump of the variable registry. Each entry has: `name`
-    (what you pass to `set_control`), `lvar` (the underlying variable, readable
-    with `read_state`), `kind`, `valid_values`, `description`, `group`, and
-    `domain`.
-
-    `domain` is worth reading: `cockpit` is a real control a pilot actuates;
-    `world` is outside state that a real simulator would provide and that we
-    fake here (e.g. whether a ground power unit is plugged in).
-    """
-    return _CONTROLS
-
-
-@mcp.tool(annotations=_READ_ONLY)
-def list_failures() -> list[dict[str, str]]:
-    """List the failures that can be injected with `inject_failure`.
-
-    Each entry has a stable `id` (e.g. `elec.tr.1`), a `description`, a `group`,
-    and `ata` (the ATA chapter id the aircraft vendor uses for the same failure).
-
-    This is the catalog of what *can* break — not what *is* broken. To find out
-    what is currently wrong, read the ECAM.
-    """
-    return _FAILURES
-
-
-# --- action -----------------------------------------------------------------
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,  # additive: it sets a switch, it destroys nothing
-        idempotentHint=True,  # writing the same value twice is the same state
-        openWorldHint=False,
     )
-)
-def set_control(control: ControlName, value: float) -> str:
-    """Actuate a cockpit control: flip a switch or push a pushbutton.
+    def advance(seconds: float, rate: float = 5.0) -> str:
+        """Advance simulated time. Nothing you do takes effect until you call this.
 
-    `control` is a name from `list_controls`; `value` is 1 for on/auto and 0 for
-    off (see each control's `valid_values`). An out-of-range value is rejected
-    rather than silently coerced.
+        `seconds` is simulated time, not wall-clock: it runs as fast as it computes.
+        `rate` is ticks per second (5 is the usual settling rate; leave it alone
+        unless you have a reason).
 
-    The write lands immediately, but the aircraft does not react until time
-    passes: call `advance` afterwards, then read the state back to confirm.
-    """
-    _sim.set(control, value)
-    return f"{control} <- {value:g} (call advance() for the aircraft to react)"
+        Rules of thumb: 2 seconds to let a contactor sequence settle after acting;
+        5 seconds for a network to reconfigure after a failure; ~65 seconds for an
+        APU to spin up. Returns the new simulated clock.
+        """
+        if seconds <= 0:
+            raise ToolError(f"seconds must be positive, got {seconds}")
+        if seconds > MAX_ADVANCE_S:
+            raise ToolError(
+                f"seconds must be at most {MAX_ADVANCE_S:g} in one call, got {seconds:g}. "
+                f"Advance in steps and observe in between — that is the loop."
+            )
+        if rate <= 0:
+            raise ToolError(f"rate must be positive, got {rate}")
+        # Blocking on purpose. This runs on the event loop thread, and it must: the
+        # Sim is `unsendable` (D-010), so handing this to anyio.to_thread to "avoid
+        # blocking" would raise RuntimeError from the binding. With stdio there is a
+        # single client and nothing else to serve, so there is nothing to block.
+        sim.run(seconds, rate)
+        return f"advanced {seconds:g}s (t={sim.sim_time():.1f}s)"
 
+    if profile == "interactive":
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,
-        idempotentHint=False,  # time moves: the same call twice is not the same
-        openWorldHint=False,
-    )
-)
-def advance(seconds: float, rate: float = 5.0) -> str:
-    """Advance simulated time. Nothing you do takes effect until you call this.
-
-    `seconds` is simulated time, not wall-clock: it runs as fast as it computes.
-    `rate` is ticks per second (5 is the usual settling rate; leave it alone
-    unless you have a reason).
-
-    Rules of thumb: 2 seconds to let a contactor sequence settle after acting;
-    5 seconds for a network to reconfigure after a failure; ~65 seconds for an
-    APU to spin up. Returns the new simulated clock.
-    """
-    if seconds <= 0:
-        raise ToolError(f"seconds must be positive, got {seconds}")
-    if seconds > MAX_ADVANCE_S:
-        raise ToolError(
-            f"seconds must be at most {MAX_ADVANCE_S:g} in one call, got {seconds:g}. "
-            f"Advance in steps and observe in between — that is the loop."
+        @server.tool(
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,  # it breaks a system (reversibly, via clear_failure)
+                idempotentHint=True,  # a set: injecting twice is injecting once
+                openWorldHint=False,
+            )
         )
-    if rate <= 0:
-        raise ToolError(f"rate must be positive, got {rate}")
-    # Blocking on purpose. This runs on the event loop thread, and it must: the
-    # Sim is `unsendable` (D-010), so handing this to anyio.to_thread to "avoid
-    # blocking" would raise RuntimeError from the binding. With stdio there is a
-    # single client and nothing else to serve, so there is nothing to block.
-    _sim.run(seconds, rate)
-    return f"advanced {seconds:g}s (t={_sim.sim_time():.1f}s)"
+        def inject_failure(failure_id: FailureId) -> str:
+            """Break something: inject a failure by its id from `list_failures`.
+
+            Reversible with `clear_failure`. Takes effect on the next `advance`.
+
+            This is a scenario-authoring tool. If you are being asked to *manage* a
+            failure, it has already been injected for you — diagnose it from the ECAM
+            rather than injecting your own.
+            """
+            sim.inject_failure(failure_id)
+            return f"injected {failure_id} (call advance() for it to take effect)"
+
+        @server.tool(
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=False,  # restores: the opposite of destructive
+                idempotentHint=True,
+                openWorldHint=False,
+            )
+        )
+        def clear_failure(failure_id: FailureId) -> str:
+            """Repair an injected failure by its id. Takes effect on the next `advance`.
+
+            Clearing a failure that is not active is fine, not an error.
+
+            Note this repairs the underlying fault — it is not how a crew responds to a
+            failure. Managing one means reconfiguring the aircraft with `set_control`.
+            """
+            sim.clear_failure(failure_id)
+            return f"cleared {failure_id} (call advance() for it to take effect)"
+
+    else:  # benchmark
+
+        @server.tool(
+            annotations=ToolAnnotations(
+                readOnlyHint=True,  # it changes nothing in the aircraft
+                idempotentHint=True,
+                openWorldHint=False,
+            )
+        )
+        def report_done(diagnosis: str, actions_summary: str) -> str:
+            """Declare the episode finished. Call this exactly once, at the end.
+
+            `diagnosis` is what you concluded was wrong with the aircraft;
+            `actions_summary` is a short account of the actions you took and why.
+            After calling this, make no further tool calls.
+            """
+            # The runner mediates every tool call, so the payload is recorded in
+            # the trajectory; nothing to persist here.
+            return "Report recorded. The episode is over; make no further tool calls."
+
+    return server
 
 
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=True,  # it breaks a system (reversibly, via clear_failure)
-        idempotentHint=True,  # a set: injecting twice is injecting once
-        openWorldHint=False,
-    )
-)
-def inject_failure(failure_id: FailureId) -> str:
-    """Break something: inject a failure by its id from `list_failures`.
-
-    Reversible with `clear_failure`. Takes effect on the next `advance`.
-
-    This is a scenario-authoring tool. If you are being asked to *manage* a
-    failure, it has already been injected for you — diagnose it from the ECAM
-    rather than injecting your own.
-    """
-    _sim.inject_failure(failure_id)
-    return f"injected {failure_id} (call advance() for it to take effect)"
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        readOnlyHint=False,
-        destructiveHint=False,  # restores: the opposite of destructive
-        idempotentHint=True,
-        openWorldHint=False,
-    )
-)
-def clear_failure(failure_id: FailureId) -> str:
-    """Repair an injected failure by its id. Takes effect on the next `advance`.
-
-    Clearing a failure that is not active is fine, not an error.
-
-    Note this repairs the underlying fault — it is not how a crew responds to a
-    failure. Managing one means reconfiguring the aircraft with `set_control`.
-    """
-    _sim.clear_failure(failure_id)
-    return f"cleared {failure_id} (call advance() for it to take effect)"
+# The stdio server, built over the module-level Sim. Kept at module level so
+# `from a320_mcp.server import mcp` keeps working and `main()` stays a thin
+# argparse wrapper.
+mcp = create_server(_sim)
 
 
 # --- start states -----------------------------------------------------------
-def _run_until(
+def run_until(
     sim: "a320_sim.Sim", variable: str, target: float, timeout_s: int, what: str
 ) -> None:
     """Advance in 1 s steps until `variable` reads exactly `target` (bounded).
@@ -314,6 +394,8 @@ def _run_until(
     pattern as `run_until` in the core's integration tests: never a blind
     sleep, never unbounded — a start state that cannot be reached is a bug and
     should fail loudly at server startup, not hand the agent a broken aircraft.
+
+    Public because the Phase 5 benchmark runner reuses it for scenario setup.
     """
     elapsed = 0
     while sim.get([variable])[variable] != target:
@@ -347,7 +429,7 @@ def _start_apu_running(sim: "a320_sim.Sim") -> None:
     sim.set("apu_start", 1)
 
     # Bounded wait, not a blind sleep: the APS3200 reaches available at ~62 s.
-    _run_until(
+    run_until(
         sim, "OVHD_APU_START_PB_IS_AVAILABLE", 1.0, 150, "the APU did not reach available"
     )
 
@@ -387,13 +469,13 @@ def _start_engines_running(sim: "a320_sim.Sim") -> None:
     sim.set("eng_mode", 2)
     sim.set("eng_master_1", 1)
     # ENGINE_STATE: Off=0 / On=1 / Starting=2 — wait for On, not merely non-zero.
-    _run_until(sim, "ENGINE_STATE:1", 1.0, 120, "engine 1 did not reach idle")
+    run_until(sim, "ENGINE_STATE:1", 1.0, 120, "engine 1 did not reach idle")
     sim.set("gen_1", 1)
     sim.run(2.0, 5.0)
 
     # Engine 2 off the crossbleed, then its generator.
     sim.set("eng_master_2", 1)
-    _run_until(sim, "ENGINE_STATE:2", 1.0, 120, "engine 2 did not reach idle")
+    run_until(sim, "ENGINE_STATE:2", 1.0, 120, "engine 2 did not reach idle")
     sim.set("gen_2", 1)
     sim.run(2.0, 5.0)
 
@@ -405,7 +487,7 @@ def _start_engines_running(sim: "a320_sim.Sim") -> None:
     sim.set("apu_gen", 0)
     sim.set("apu_master", 0)
     sim.run(5.0, 5.0)
-    _run_until(sim, "OVHD_APU_START_PB_IS_AVAILABLE", 0.0, 300, "the APU did not shut down")
+    run_until(sim, "OVHD_APU_START_PB_IS_AVAILABLE", 0.0, 300, "the APU did not shut down")
     sim.run(5.0, 5.0)
 
 
