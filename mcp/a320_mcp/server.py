@@ -34,7 +34,7 @@ Design notes
 import argparse
 import sys
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, get_args
 
 try:
     import a320_sim
@@ -137,14 +137,17 @@ INSTRUCTIONS_PROFILES: "dict[str, str]" = {
 # keeps a client from treating these as calls out to the internet.
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
-PROFILES = ("interactive", "benchmark")
+# The static type and the runtime check share one source of truth: the tuple
+# used in the error message is derived from the Literal.
+Profile = Literal["interactive", "benchmark"]
+PROFILES: "tuple[str, ...]" = get_args(Profile)
 
 
 def create_server(
     sim: "a320_sim.Sim",
     *,
     instructions: "str | None" = None,
-    profile: str = "interactive",
+    profile: Profile = "interactive",
 ) -> FastMCP:
     """Build a FastMCP server whose tools drive `sim`.
 
