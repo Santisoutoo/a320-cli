@@ -283,10 +283,16 @@ def load_scenario(path: "str | Path", *, check_catalogs: bool = True) -> Scenari
         raw=data,
     )
 
-    for pred in scenario.success.final_state:
+    # Every predicate in the file, not only success criteria: a failure trigger
+    # with an empty window would otherwise hang the injection wait mid-episode.
+    predicates = [("success", pred) for pred in scenario.success.final_state]
+    predicates += [
+        ("failure trigger", failure.when) for failure in scenario.failures if failure.when
+    ]
+    for where, pred in predicates:
         if pred.op == "between" and pred.min > pred.max:  # type: ignore[operator]
             raise ScenarioError(
-                f"{path}: success predicate on '{pred.var}': min {pred.min} > max {pred.max}"
+                f"{path}: {where} predicate on '{pred.var}': min {pred.min} > max {pred.max}"
             )
 
     if check_catalogs:

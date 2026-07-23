@@ -112,6 +112,17 @@ def test_inverted_between_bounds_are_rejected():
     _expect_error(data, "min 5", "max 1", check_catalogs=False)
 
 
+def test_inverted_between_bounds_in_failure_trigger_are_rejected():
+    """The empty-window check covers `failures[].at.when` too, not only success.
+
+    A trigger predicate that can never hold would hang the injection wait
+    mid-episode — exactly the class of error load time exists to catch.
+    """
+    data = _base()
+    data["failures"][0]["at"] = {"when": {"var": "X", "op": "between", "min": 5, "max": 1}}
+    _expect_error(data, "min 5", "max 1", check_catalogs=False)
+
+
 def test_unknown_top_level_key_is_rejected():
     """additionalProperties: false — a typo'd section must not pass silently."""
     data = _base()
