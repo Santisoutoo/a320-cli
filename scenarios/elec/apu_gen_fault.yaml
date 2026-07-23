@@ -1,0 +1,100 @@
+# First benchmark scenario (#19, slice B): loss of the APU generator on the
+# ground, with the APU as the only AC source and a GPU standing by.
+#
+# Why this one first: the failure and its caution are the Phase 2 chain
+# (core-rs/tests/generator_caution.rs), apu-running is the cheapest start state
+# (~60 s of sim), and the procedure has a real ordering dependency (reset
+# attempt before switching source) that exercises the block semantics.
+schema_version: 1
+id: elec-apu-gen-fault
+title: "APU GEN FAULT on ground, APU as only AC source, GPU available"
+system: ELEC
+
+initial_state:
+  start: apu-running
+  world_controls:
+    # The GPU is plugged in from the start (world state is the scenario's to
+    # fix, never the agent's to invent — mcp/README.md, Phase 3 closure note).
+    # Verified 2026-07-23 against vendor pin 13bce4b: with ext_pwr_avail=1 and
+    # the EXT PWR pb off, the line contactor stays open and the APU GEN FAULT
+    # caution still appears when the failure is injected.
+    ext_pwr_avail: 1
+
+failures:
+  - id: elec.apu_gen.1
+    at: { after_setup_s: 10 }
+    settle_s: 5
+
+expected_ecam:
+  # Validity gate, not the agent's task. Both cautions were stable across
+  # probe runs; HYD ENG 2 PUMP FAULT appeared in some runs only, so it is
+  # deliberately not asserted (vendor randomness, D-determinism).
+  must_appear:
+    - "APU GEN FAULT"
+    - "AC ESS BUS FAULT"
+  must_not_appear: []
+
+task_prompt: >
+  Something is wrong with the aircraft. Diagnose the situation from the ECAM
+  and the system state, resolve it following the appropriate procedure, and
+  call report_done when you consider the situation handled.
+
+ground_truth:
+  source:
+    document: >-
+      Airbus A318/A319/A320/A321 FCOM, PRO-ABN-24 (ELEC APU GEN FAULT):
+      generator reset attempt via its pushbutton, then the faulty generator
+      off and an alternate source on. Modeled behavior cross-checked against
+      the FlyByWire A32NX documentation, "Electrical System Control Panel":
+      APU GEN pb OFF "the generator is unpowered and the line contactor
+      opens. The fault circuit is reset."; the FAULT indication is suppressed
+      when EXT PWR or an ENG GEN provides power.
+    revision: "FBW docs as published 2026-07-23 (A32NX); FCOM procedure identity, wording not reproduced"
+    url: "https://docs.flybywiresim.com/pilots-corner/a32nx/a32nx-briefing/flight-deck/ovhd/elec/"
+    accessed: "2026-07-23"
+    notes: >-
+      Fidelity boundary, verified empirically on vendor pin 13bce4b
+      (2026-07-23): the modeled pb behaves exactly as the FBW docs describe —
+      APU GEN pb OFF retires the caution (fault circuit reset), pb back ON
+      with the fault still present re-raises it (observable failed reset),
+      and connecting EXT PWR restores AC 1/2/ESS and retires every caution
+      even before the pb is selected off. The failure also drops the whole AC
+      network (AC ESS BUS FAULT cascade) because the APU GEN was the only
+      source. The block structure below encodes reset-before-alternate-source;
+      the exact FCOM wording was not available in a redistributable copy, so
+      the action list is the procedure's structure, not a verbatim transcript.
+  procedure:
+    - block: reset_attempt
+      ordered: true
+      actions:
+        - { control: apu_gen, value: 0, rationale: "APU GEN pb OFF — line contactor opens, fault circuit resets" }
+        - { control: apu_gen, value: 1, rationale: "APU GEN pb ON — reset attempt; with the fault present the caution returns" }
+    - block: restore_power
+      # Unordered on purpose: the faulty source off and the alternate source
+      # on have no dependency between them in the model or the procedure.
+      actions:
+        - { control: apu_gen, value: 0, rationale: "reset unsuccessful: faulty generator off" }
+        - { control: ext_pwr, value: 1, rationale: "EXT PWR pb ON — the available GPU takes the network" }
+  optional_actions:
+    # Legitimate housekeeping the procedure permits: the APU itself is healthy
+    # but no longer needed once the GPU carries the network.
+    - { control: apu_master, value: 0, rationale: "APU no longer needed with EXT PWR on the network" }
+    - { control: apu_bleed, value: 0, rationale: "bleed not needed on ground power" }
+  forbidden_actions:
+    - { control: bat_1, value: 0, severity: dangerous, rationale: "batteries hold DC ESS while the AC network is down" }
+    - { control: bat_2, value: 0, severity: dangerous, rationale: "batteries hold DC ESS while the AC network is down" }
+
+success:
+  final_state:
+    - { var: ELEC_AC_1_BUS_IS_POWERED, op: eq, value: 1 }
+    - { var: ELEC_AC_2_BUS_IS_POWERED, op: eq, value: 1 }
+    - { var: ELEC_AC_ESS_BUS_IS_POWERED, op: eq, value: 1 }
+  ecam_clear_of:
+    - "APU GEN FAULT"
+    - "AC ESS BUS FAULT"
+
+budget:
+  max_tool_calls: 40
+  max_sim_time_s: 600
+
+instructions_profile: benchmark
