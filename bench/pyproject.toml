@@ -21,9 +21,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real LLM providers (slice D). CI installs without this extra: every test
-# runs against the ScriptedAdapter, no network, no keys.
-providers = []
+# Real LLM providers. CI installs without this extra: every test runs against
+# the ScriptedAdapter, no network, no keys. Pinned EXACTLY: litellm is the
+# benchmark's provider translation layer and its version is part of a run's
+# identity (recorded in every trajectory's meta).
+providers = ["litellm==1.93.0"]
+
+[project.scripts]
+a320-bench = "a320_bench.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["a320_bench*"]

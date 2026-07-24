@@ -1,0 +1,79 @@
+"""``a320-bench``: run recorded benchmark episodes from the command line.
+
+    a320-bench run --scenario scenarios/elec/apu_gen_fault.yaml \
+                   --model anthropic/claude-opus-4-8 --runs 3 --out runs/
+
+Each run gets a fresh Sim, a fresh benchmark-profile MCP server and its own
+JSONL trajectory under ``<out>/<scenario_id>/``. The command needs the
+``[providers]`` extra (litellm); everything else in the package runs without
+it.
+"""
+
+import argparse
+import asyncio
+import json
+import sys
+
+from a320_bench.episode import run_episode
+from a320_bench.scenario import load_scenario
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="a320-bench",
+        description="Phase 5 benchmark harness: recorded agent episodes over MCP.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    run = sub.add_parser("run", help="run one scenario against a real model")
+    run.add_argument("--scenario", required=True, help="path to a scenario YAML")
+    run.add_argument(
+        "--model",
+        required=True,
+        help="litellm model id, e.g. anthropic/claude-opus-4-8 or gpt-...",
+    )
+    run.add_argument("--runs", type=int, default=1, help="episodes to run (default 1)")
+    run.add_argument("--out", default="runs", help="output directory (default runs/)")
+    run.add_argument(
+        "--sampling",
+        default=None,
+        help='JSON dict passed to litellm.completion verbatim, e.g. \'{"temperature": 0}\'',
+    )
+    return parser
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    # Imported here, not at module top: the CLI is the only piece that needs
+    # litellm, and the error message tells the user exactly what to install.
+    from a320_bench.providers.litellm_adapter import LiteLLMAdapter
+
+    scenario = load_scenario(args.scenario)
+    sampling = json.loads(args.sampling) if args.sampling else None
+
+    failures = 0
+    for i in range(args.runs):
+        adapter = LiteLLMAdapter(args.model, sampling=sampling)
+        result = asyncio.run(run_episode(scenario, adapter, args.out))
+        verdict = (
+            "INVALID"
+            if not result.valid
+            else ("PASS" if result.all_passed else "FAIL")
+        )
+        print(
+            f"[{i + 1}/{args.runs}] {scenario.id} {verdict} "
+            f"reason={result.reason} tool_calls={result.tool_calls_used} "
+            f"sim_t={result.sim_time_end:.1f}s -> {result.trajectory_path}",
+            file=sys.stderr,
+        )
+        if not result.valid:
+            failures += 1
+
+    # Invalid runs are harness/scenario problems and deserve a red exit code;
+    # an agent that failed the procedure is a *result*, not an error.
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

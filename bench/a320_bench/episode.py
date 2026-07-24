@@ -286,6 +286,7 @@ async def run_episode(
                         step=step,
                         text=turn.text,
                         stop_reason=turn.stop_reason,
+                        provider_raw=turn.raw,  # finish reason / token usage, adapter-defined
                     )
 
                     if not turn.tool_calls:
