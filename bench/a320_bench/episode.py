@@ -191,8 +191,14 @@ async def run_episode(
 
     with TrajectoryRecorder(out_path) as rec:
         # --- harness work: setup, injection, validity gate -------------------
-        _setup(sim, scenario)
-        injection_error = _inject(sim, scenario)
+        # A harness crash is a bug in us, not in the agent: leave evidence in
+        # the trajectory instead of an empty orphan file, then re-raise.
+        try:
+            _setup(sim, scenario)
+            injection_error = _inject(sim, scenario)
+        except Exception as exc:
+            rec.write("harness_error", stage="setup", error=repr(exc))
+            raise
         gate = (
             {"passed": False, "error": injection_error}
             if injection_error
@@ -287,6 +293,9 @@ async def run_episode(
                             reason = "end_turn_without_done"
                             break
                         nudged = True
+                        # Materialized in the trajectory: the scorer must see
+                        # every message the agent saw, not infer it.
+                        rec.write("nudge", step=step, text=NUDGE)
                         turn = adapter.next([], nudge=NUDGE)
                         continue
 

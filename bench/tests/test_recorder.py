@@ -31,6 +31,30 @@ def test_non_json_values_are_stringified_not_fatal():
         assert record["path_obj"] == "somewhere"
 
 
+def test_truncated_final_line_is_tolerated_mid_file_corruption_is_not():
+    """A crash mid-write leaves a partial last line; that is still evidence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "r.jsonl"
+        with TrajectoryRecorder(path) as rec:
+            rec.write("meta", run_id="r1")
+            rec.write("tool_call", name="advance")
+        with path.open("a", encoding="utf-8") as f:
+            f.write('{"type": "final", "reas')  # truncated by a crash
+
+        records = read_trajectory(path)
+        assert [r["type"] for r in records] == ["meta", "tool_call"]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "corrupt.jsonl"
+        path.write_text('{"type": "meta"}\nnot json at all\n{"type": "final"}\n', encoding="utf-8")
+        try:
+            read_trajectory(path)
+        except Exception:
+            pass
+        else:
+            raise AssertionError("mid-file corruption must raise, not be skipped")
+
+
 def test_lines_are_valid_json_one_per_record():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "r.jsonl"

@@ -51,9 +51,21 @@ class TrajectoryRecorder:
 
 
 def read_trajectory(path: "str | Path") -> list[dict[str, Any]]:
-    """Read a trajectory back as a list of records (the #20 entry point)."""
-    return [
-        json.loads(line)
-        for line in Path(path).read_text(encoding="utf-8").splitlines()
-        if line.strip()
+    """Read a trajectory back as a list of records (the #20 entry point).
+
+    Tolerates a truncated *final* line (an OS-level crash mid-write leaves
+    one): the partial trajectory is still evidence. A malformed line anywhere
+    else is corruption and raises.
+    """
+    lines = [
+        line for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()
     ]
+    records = []
+    for i, line in enumerate(lines):
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            if i == len(lines) - 1:
+                break
+            raise
+    return records
