@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "a320-bench"
-version = "0.1.0"
+version = "0.5.0"
 description = "Phase 5 benchmark harness: scenario suite, episode runner and trajectory recording over the a320 MCP server"
 readme = "README.md"
 requires-python = ">=3.10"

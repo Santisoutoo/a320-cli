@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "a320-mcp"
-version = "0.1.0"
+version = "0.5.0"
 description = "MCP server exposing the headless A320 systems core to LLM agents"
 readme = "README.md"
 # El SDK de MCP exige >=3.10; el resto de paquetes del repo declaran >=3.9.
