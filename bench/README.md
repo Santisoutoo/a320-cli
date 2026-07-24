@@ -20,8 +20,18 @@ pip install -e bench/
   then live cross-checks of every control name, failure id and start state
   against the core catalogs (a bad reference fails at load time, not
   mid-episode).
-- `a320_bench/episode.py` — episode runner (slice C, #70).
-- `a320_bench/recorder.py` — JSONL trajectory writer (slice C, #70).
+- `a320_bench/episode.py` — the episode runner. In-process and privileged: it
+  owns the `Sim` (setup, world controls, failure injection, ground truth via
+  `active_failures()`), while the agent talks to a benchmark-profile MCP
+  server (no `inject_failure`/`clear_failure`, plus `report_done`) over the
+  SDK's memory transport. Records every turn and tool call to JSONL with the
+  simulated clock around each call; ends on `report_done`, budget exhaustion,
+  two empty turns (one nudge), a provider error (partial trajectory kept), or
+  a failed validity gate (`invalid_scenario`: the world never showed the ECAM
+  the scenario promised, so there is nothing to score).
+- `a320_bench/recorder.py` — JSONL trajectory writer/reader; the trajectory is
+  self-contained (scenario embedded, tool surface, vendor pin, versions) so
+  the #20 scorer never re-simulates.
 - `a320_bench/providers/` — agent adapters; `scripted` needs no LLM and is
   what CI runs (litellm adapter arrives in slice D, #71).
 
