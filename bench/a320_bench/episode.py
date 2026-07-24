@@ -35,6 +35,7 @@ from typing import Any
 import a320_sim
 from a320_mcp.server import INSTRUCTIONS_PROFILES, START_STATES, create_server
 from mcp.shared.memory import create_connected_server_and_client_session
+from mcp.types import CallToolResult
 
 from a320_bench.providers.base import ProviderAdapter, ToolResult, Turn
 from a320_bench.recorder import TRAJECTORY_SCHEMA_VERSION, TrajectoryRecorder
@@ -49,6 +50,14 @@ NUDGE = (
 
 @dataclass(frozen=True)
 class EpisodeResult:
+    """Summary of one finished episode; the JSONL at `trajectory_path` has the detail.
+
+    `reason` is one of the ``final.reason`` values in the module docstring.
+    `valid` is False only for ``invalid_scenario``, in which case `all_passed`
+    is None (the agent was never consulted, there is nothing to grade);
+    otherwise `all_passed` mirrors the harness's success evaluation.
+    """
+
     run_id: str
     trajectory_path: Path
     reason: str
@@ -159,7 +168,7 @@ def _evaluate_success(sim: "a320_sim.Sim", scenario: Scenario) -> dict[str, Any]
     return {"final_state": checks, "ecam_clear_of": ecam_checks, "all_passed": all_passed}
 
 
-def _tool_result_text(result: Any) -> str:
+def _tool_result_text(result: CallToolResult) -> str:
     return " ".join(
         c.text for c in result.content if getattr(c, "type", None) == "text"
     )

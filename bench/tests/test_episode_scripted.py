@@ -171,6 +171,83 @@ def test_script_exhaustion_is_end_turn_without_done_after_one_nudge():
     assert len(empty_turns) == 2
 
 
+def test_malformed_report_done_is_an_error_and_does_not_end_the_episode():
+    """report_done with missing args is a recorded error, not an episode end.
+
+    Driven in a different order than the procedure tests (L-003): the broken
+    report_done is the *first* call of the episode. The runner must only end
+    on a report_done that actually validated.
+    """
+    script = [
+        [("report_done", {"diagnosis": "missing actions_summary"})],  # invalid: arg missing
+        [("read_ecam", {})],
+        [("report_done", {"diagnosis": "second attempt", "actions_summary": "none"})],
+    ]
+    result, records = _run(script)
+
+    assert result.reason == "agent_done"
+    dones = [r for r in records if r["type"] == "tool_call" and r["name"] == "report_done"]
+    assert len(dones) == 2
+    assert dones[0]["is_error"], "the malformed call must be recorded as an error"
+    assert not dones[1]["is_error"]
+    assert records[-1]["done_payload"]["diagnosis"] == "second attempt", (
+        "done_payload must come from the report_done that validated, not the broken one"
+    )
+
+
+def test_adapter_raising_in_start_is_provider_error_with_final_record():
+    """A provider that blows up before its first turn still yields a scoreable file.
+
+    The partial trajectory must keep meta + setup and close with a final record
+    carrying the harness's own success evaluation (which fails: nobody acted).
+    """
+
+    class ExplodingAdapter:
+        info = {"provider": "exploding", "model": "none"}
+
+        def start(self, *, instructions, tools, user_message):
+            raise RuntimeError("boom before the first turn")
+
+        def next(self, results, *, nudge=None):  # pragma: no cover - never reached
+            raise AssertionError("next() must not be called")
+
+    scenario = load_scenario(FIRST_SCENARIO)
+    with tempfile.TemporaryDirectory() as tmp:
+        result = asyncio.run(run_episode(scenario, ExplodingAdapter(), tmp))
+        records = read_trajectory(result.trajectory_path)
+
+    assert result.reason == "provider_error"
+    assert result.valid is True
+    assert result.all_passed is False
+    assert result.tool_calls_used == 0
+    assert [r["type"] for r in records[:2]] == ["meta", "setup"]
+    errors = [r for r in records if r["type"] == "provider_error"]
+    assert errors and "boom before the first turn" in errors[0]["error"]
+    assert records[-1]["type"] == "final"
+    assert records[-1]["success_eval"]["all_passed"] is False
+
+
+def test_sim_time_budget_ends_the_episode():
+    """budget_sim_time counts simulated time from t0 (post-injection), not calls."""
+    import yaml
+
+    data = yaml.safe_load(FIRST_SCENARIO.read_text(encoding="utf-8"))
+    data["budget"]["max_sim_time_s"] = 20
+    script = [
+        [("advance", {"seconds": 25})],
+        # Must never be consulted: the budget check runs after every call.
+        [("report_done", {"diagnosis": "too late", "actions_summary": "none"})],
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        mutated = Path(tmp) / "mutated.yaml"
+        mutated.write_text(yaml.safe_dump(data), encoding="utf-8")
+        result, records = _run(script, scenario_path=mutated)
+
+    assert result.reason == "budget_sim_time"
+    assert result.tool_calls_used == 1, "the episode must end on the call that burst the budget"
+    assert records[-1]["success_eval"]["all_passed"] is False
+
+
 if __name__ == "__main__":
     tests = sorted(
         (name, fn) for name, fn in globals().items() if name.startswith("test_") and callable(fn)
