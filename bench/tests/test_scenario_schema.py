@@ -160,6 +160,25 @@ def test_unknown_start_state_is_rejected():
     _expect_error(data, "hangar")
 
 
+def test_out_of_range_action_value_is_rejected_by_the_core_oracle():
+    """Control values are validated by the core's own `set` (D-017 spirit).
+
+    The catalog's `valid_values` strings are for humans; the machine truth is
+    whether the core accepts the write. apu_gen only takes 0/1 — a 7 in a
+    procedure block must fail at load time, not mid-episode.
+    """
+    data = _base()
+    data["ground_truth"]["procedure"][0]["actions"][0]["value"] = 7
+    _expect_error(data, "reset_attempt")
+
+
+def test_world_control_in_set_controls_is_rejected():
+    """set_controls is for cockpit overrides; world state goes in world_controls."""
+    data = _base()
+    data["initial_state"]["set_controls"] = {"ext_pwr_avail": 1}
+    _expect_error(data, "ext_pwr_avail", "world_controls")
+
+
 # --- predicates ------------------------------------------------------------------
 def test_predicate_evaluation():
     assert evaluate_predicate(Predicate(var="v", op="eq", value=1.0), 1.0)
