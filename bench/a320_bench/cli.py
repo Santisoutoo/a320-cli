@@ -63,23 +63,44 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help='JSON dict passed to litellm.completion verbatim, e.g. \'{"temperature": 0}\'',
     )
+
+    serve = sub.add_parser(
+        "serve",
+        help="serve one scenario over stdio (benchmark profile) for an external "
+        "MCP client, e.g. claude -p on a subscription",
+    )
+    serve.add_argument("--scenario", required=True, help="path to a scenario YAML")
+    serve.add_argument(
+        "--result",
+        default=None,
+        help="path to write the harness's success evaluation JSON on shutdown",
+    )
     return parser
 
 
 def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
 
-    # Imported here, not at module top: the CLI is the only piece that needs
+    try:
+        scenario = load_scenario(args.scenario)
+    except ScenarioError as exc:
+        print(f"a320-bench: {exc}", file=sys.stderr)
+        return 2
+
+    if args.command == "serve":
+        from pathlib import Path
+
+        from a320_bench.serve import serve_scenario
+
+        return serve_scenario(
+            scenario, result_path=Path(args.result) if args.result else None
+        )
+
+    # Imported here, not at module top: `run` is the only piece that needs
     # litellm, and the error message tells the user exactly what to install.
     try:
         from a320_bench.providers.litellm_adapter import LiteLLMAdapter
     except ImportError as exc:
-        print(f"a320-bench: {exc}", file=sys.stderr)
-        return 2
-
-    try:
-        scenario = load_scenario(args.scenario)
-    except ScenarioError as exc:
         print(f"a320-bench: {exc}", file=sys.stderr)
         return 2
 

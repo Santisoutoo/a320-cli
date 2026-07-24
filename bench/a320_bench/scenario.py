@@ -162,13 +162,25 @@ def evaluate_predicate(pred: Predicate, value: float) -> bool:
 
 # --- catalogs (cached: building a Sim costs ~1 s) ------------------------------
 @functools.lru_cache(maxsize=1)
+def _catalog_sim() -> "Any":
+    """A throwaway Sim used only as the catalog/validation oracle.
+
+    Never stepped, never observed: `set` may be called on it to let the core
+    validate a (control, value) pair — writes land in its variable store but
+    the aircraft is never advanced, so nothing accumulates.
+    """
+    import a320_sim
+
+    return a320_sim.Sim()
+
+
+@functools.lru_cache(maxsize=1)
 def _catalogs() -> tuple[dict[str, str], frozenset[str], frozenset[str], frozenset[str]]:
     """(control name -> domain, failure ids, START_STATES keys, instructions
     profiles), from the live core and the MCP server module."""
-    import a320_sim
     from a320_mcp.server import INSTRUCTIONS_PROFILES, START_STATES
 
-    sim = a320_sim.Sim()
+    sim = _catalog_sim()
     domains = {c["name"]: c["domain"] for c in sim.list_controls()}
     failures = frozenset(f["id"] for f in sim.list_failures())
     return domains, failures, frozenset(START_STATES), frozenset(INSTRUCTIONS_PROFILES)
@@ -325,7 +337,14 @@ def _cross_check(scenario: Scenario, path: Path) -> None:
                 f"see list_failures())"
             )
 
-    def check_control(name: str, where: str, *, must_be_world: bool = False) -> None:
+    def check_control(
+        name: str,
+        where: str,
+        *,
+        must_be_world: bool = False,
+        cockpit_only: bool = False,
+        value: "float | None" = None,
+    ) -> None:
         if name not in domains:
             raise ScenarioError(
                 f"{path}: unknown control '{name}' in {where} (not in the core catalog; "
@@ -337,15 +356,33 @@ def _cross_check(scenario: Scenario, path: Path) -> None:
                 f"but world_controls may only pre-set domain=world controls — cockpit "
                 f"state belongs in set_controls or in the agent's hands"
             )
+        if cockpit_only and domains[name] == "world":
+            raise ScenarioError(
+                f"{path}: control '{name}' in {where} has domain 'world' — world "
+                f"state belongs in world_controls, not among cockpit overrides"
+            )
+        if value is not None:
+            # The core is the oracle for valid values (same philosophy as
+            # D-017): its catalog strings ('0 (off) or 1 (on)', 'one of
+            # [...]') are for humans, `set` is the machine-checkable truth.
+            # The catalog Sim is never advanced, so the write is inert.
+            import a320_sim
 
-    for name in scenario.initial_state.world_controls:
-        check_control(name, "initial_state.world_controls", must_be_world=True)
-    for name in scenario.initial_state.set_controls:
-        check_control(name, "initial_state.set_controls")
+            try:
+                _catalog_sim().set(name, value)
+            except a320_sim.SimError as exc:
+                raise ScenarioError(f"{path}: in {where}: {exc}") from exc
+
+    for name, value in scenario.initial_state.world_controls.items():
+        check_control(name, "initial_state.world_controls", must_be_world=True, value=value)
+    for name, value in scenario.initial_state.set_controls.items():
+        check_control(name, "initial_state.set_controls", cockpit_only=True, value=value)
     for block in scenario.ground_truth.procedure:
         for action in block.actions:
-            check_control(action.control, f"procedure block '{block.block}'")
+            check_control(
+                action.control, f"procedure block '{block.block}'", value=action.value
+            )
     for action in scenario.ground_truth.optional_actions:
-        check_control(action.control, "optional_actions")
+        check_control(action.control, "optional_actions", value=action.value)
     for forbidden in scenario.ground_truth.forbidden_actions:
-        check_control(forbidden.control, "forbidden_actions")
+        check_control(forbidden.control, "forbidden_actions", value=forbidden.value)
