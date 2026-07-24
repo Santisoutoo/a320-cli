@@ -33,7 +33,16 @@ pip install -e bench/
   self-contained (scenario embedded, tool surface, vendor pin, versions) so
   the #20 scorer never re-simulates.
 - `a320_bench/providers/` — agent adapters; `scripted` needs no LLM and is
-  what CI runs (litellm adapter arrives in slice D, #71).
+  what CI runs; `litellm_adapter` (pinned litellm, `[providers]` extra) is
+  the canonical real-model path.
+- `a320_bench/serve.py` — `a320-bench serve --scenario X --result out.json`:
+  the same privileged setup + injection + validity gate, then the benchmark
+  tool surface on **stdio** for an external MCP client that owns its own
+  agent loop — above all `claude -p` on a Claude subscription. The harness's
+  verdict lands in `--result` on shutdown. Demo/dev path: the trajectory is
+  the client's transcript (`--output-format stream-json`), and the client's
+  system prompt is a confound for model-vs-model baselines — those go
+  through `a320-bench run`.
 
 ## Tests
 
