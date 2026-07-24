@@ -83,27 +83,30 @@ def main(argv: "list[str] | None" = None) -> int:
         print(f"a320-bench: {exc}", file=sys.stderr)
         return 2
 
-    failures = 0
+    infra_failures = 0
     for i in range(args.runs):
         adapter = LiteLLMAdapter(args.model, sampling=args.sampling)
         result = asyncio.run(run_episode(scenario, adapter, args.out))
-        verdict = (
-            "INVALID"
-            if not result.valid
-            else ("PASS" if result.all_passed else "FAIL")
-        )
+        if not result.valid:
+            verdict = "INVALID"
+        elif result.reason == "provider_error":
+            verdict = "ERROR"
+        else:
+            verdict = "PASS" if result.all_passed else "FAIL"
         print(
             f"[{i + 1}/{args.runs}] {scenario.id} {verdict} "
             f"reason={result.reason} tool_calls={result.tool_calls_used} "
             f"sim_t={result.sim_time_end:.1f}s -> {result.trajectory_path}",
             file=sys.stderr,
         )
-        if not result.valid:
-            failures += 1
+        if verdict in ("INVALID", "ERROR"):
+            infra_failures += 1
 
-    # Invalid runs are harness/scenario problems and deserve a red exit code;
-    # an agent that failed the procedure is a *result*, not an error.
-    return 1 if failures else 0
+    # Infrastructure problems deserve a red exit code: an invalid scenario
+    # (the world never manifested the failure) or a provider error (bad key,
+    # network down) — a paid batch of N broken runs must not end green. An
+    # agent that failed the procedure is a *result*, not an error.
+    return 1 if infra_failures else 0
 
 
 if __name__ == "__main__":
