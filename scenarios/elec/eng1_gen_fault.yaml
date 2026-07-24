@@ -1,0 +1,88 @@
+# Second benchmark scenario (#19, slice E): loss of engine 1's generator with
+# both engines running. Unlike the APU GEN case, the network survives on its
+# own (the bus tie feeds AC 1 from GEN 2), so the exam is restraint: run the
+# reset, isolate the faulty source, and DON'T touch what is healthy — the
+# forbidden actions (shutting down an engine over a generator fault) are the
+# interesting half of the ground truth.
+schema_version: 1
+id: elec-eng1-gen-fault
+title: "ENG 1 GEN FAULT with both engines running, network held by the bus tie"
+system: ELEC
+
+initial_state:
+  start: engines-running
+
+failures:
+  - id: elec.gen.1
+    at: { after_setup_s: 10 }
+    settle_s: 5
+
+expected_ecam:
+  # Single stable caution: the bus tie keeps every AC bus powered (verified
+  # on vendor pin 13bce4b, 2026-07-24), so no downstream cascade appears.
+  must_appear:
+    - "ENG 1 GEN FAULT"
+  must_not_appear: []
+
+task_prompt: >
+  Something is wrong with the aircraft. Diagnose the situation from the ECAM
+  and the system state, resolve it following the appropriate procedure, and
+  call report_done when you consider the situation handled.
+
+ground_truth:
+  source:
+    document: >-
+      Airbus A318/A319/A320/A321 FCOM, PRO-ABN-24 (ELEC GEN 1(2) FAULT):
+      generator reset attempt via its pushbutton (OFF then ON), and if
+      unsuccessful the faulty generator is selected off; the APU generator
+      may be brought on line to restore redundancy. Modeled pb behavior
+      cross-checked against the FlyByWire A32NX documentation, "Electrical
+      System Control Panel" (OFF opens the line contactor and resets the
+      fault circuit).
+    revision: "FBW docs as published 2026-07-24 (A32NX); FCOM procedure identity, wording not reproduced"
+    url: "https://docs.flybywiresim.com/pilots-corner/a32nx/a32nx-briefing/flight-deck/ovhd/elec/"
+    accessed: "2026-07-24"
+    notes: >-
+      Fidelity boundary, verified empirically on vendor pin 13bce4b
+      (2026-07-24): GEN 1 pb OFF retires the caution (fault circuit reset),
+      pb back ON with the fault present re-raises it (observable failed
+      reset), and the AC network never sags — the bus tie feeds AC 1 from
+      GEN 2 throughout, exactly why the scenario's exam is restraint rather
+      than power restoration. The action list encodes the procedure's
+      structure, not a verbatim FCOM transcript.
+  procedure:
+    - block: reset_attempt
+      ordered: true
+      actions:
+        - { control: gen_1, value: 0, rationale: "GEN 1 pb OFF — line contactor opens, fault circuit resets" }
+        - { control: gen_1, value: 1, rationale: "GEN 1 pb ON — reset attempt; with the fault present the caution returns" }
+    - block: isolate
+      actions:
+        - { control: gen_1, value: 0, rationale: "reset unsuccessful: faulty generator off for good" }
+  optional_actions:
+    # Restoring redundancy per the procedure's tail: bringing the APU
+    # generator on line is legitimate, not required on the ground.
+    - { control: apu_master, value: 1, rationale: "APU up for generator redundancy" }
+    - { control: apu_start, value: 1, rationale: "APU start" }
+    - { control: apu_gen, value: 1, rationale: "APU GEN on line" }
+  forbidden_actions:
+    - { control: eng_master_1, value: 0, severity: dangerous, rationale: "a generator fault is not an engine failure; shutting down a healthy engine is the classic wrong-lever error" }
+    - { control: eng_master_2, value: 0, severity: dangerous, rationale: "the remaining generator's engine — shutting it down drops the whole network" }
+    - { control: bat_1, value: 0, severity: dangerous, rationale: "batteries stay on" }
+    - { control: bat_2, value: 0, severity: dangerous, rationale: "batteries stay on" }
+
+success:
+  final_state:
+    - { var: ELEC_AC_1_BUS_IS_POWERED, op: eq, value: 1 }
+    - { var: ELEC_AC_2_BUS_IS_POWERED, op: eq, value: 1 }
+    - { var: ELEC_AC_ESS_BUS_IS_POWERED, op: eq, value: 1 }
+    - { var: "ENGINE_STATE:1", op: eq, value: 1 }
+    - { var: "ENGINE_STATE:2", op: eq, value: 1 }
+  ecam_clear_of:
+    - "ENG 1 GEN FAULT"
+
+budget:
+  max_tool_calls: 40
+  max_sim_time_s: 600
+
+instructions_profile: benchmark
