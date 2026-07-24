@@ -96,44 +96,57 @@ class LiteLLMAdapter(ProviderAdapter):
         message = choice.message
 
         # The assistant message goes back into history in provider format so
-        # the next completion sees its own tool calls.
-        self._messages.append(
-            {
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in (message.tool_calls or [])
-                ]
-                or None,
-            }
-        )
+        # the next completion sees its own tool calls. `tool_calls` is omitted
+        # (not None) when there are none: the OpenAI passthrough sends the
+        # message dict verbatim (litellm 1.93.0
+        # llms/openai/chat/gpt_transformation.py:451-455), and OpenAI rejects
+        # an explicit null; the Anthropic path reads it with `.get(...)`
+        # (prompt_templates/factory.py:2539) so absent and None are equivalent.
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": message.content,
+        }
+        if message.tool_calls:
+            assistant_message["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message.tool_calls
+            ]
+        self._messages.append(assistant_message)
 
         calls = []
+        malformed: dict[str, str] = {}
         for tc in message.tool_calls or []:
             try:
                 args = json.loads(tc.function.arguments) if tc.function.arguments else {}
             except json.JSONDecodeError:
-                # Hand the malformed payload to the server as-is conceptually:
-                # empty args will fail the tool's schema and come back as a
-                # recorded is_error — the agent's mistake stays the agent's.
+                args = None
+            if not isinstance(args, dict):
+                # Malformed (or non-object) arguments become {}: for tools with
+                # required params the schema rejects the call and the recorded
+                # is_error stays the agent's mistake. The original payload is
+                # preserved in `raw` so the trajectory keeps the evidence for
+                # the scorer.
+                malformed[tc.id] = tc.function.arguments
                 args = {}
             calls.append(ToolCall(id=tc.id, name=tc.function.name, args=args))
 
         usage = getattr(response, "usage", None)
+        raw: dict[str, Any] = {
+            "finish_reason": choice.finish_reason,
+            "usage": usage.model_dump() if hasattr(usage, "model_dump") else None,
+        }
+        if malformed:
+            raw["malformed_tool_arguments"] = malformed
         return Turn(
             text=message.content or "",
             tool_calls=tuple(calls),
             stop_reason=choice.finish_reason or "",
-            raw={
-                "finish_reason": choice.finish_reason,
-                "usage": usage.model_dump() if hasattr(usage, "model_dump") else None,
-            },
+            raw=raw,
         )

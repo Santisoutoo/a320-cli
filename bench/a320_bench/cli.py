@@ -13,9 +13,30 @@ import argparse
 import asyncio
 import json
 import sys
+from typing import Any
 
 from a320_bench.episode import run_episode
-from a320_bench.scenario import load_scenario
+from a320_bench.scenario import ScenarioError, load_scenario
+
+
+def _positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {value}")
+    return value
+
+
+def _sampling_dict(text: str) -> "dict[str, Any]":
+    """Parse --sampling: must be a JSON object (litellm.completion kwargs)."""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"not valid JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise argparse.ArgumentTypeError(
+            f"must be a JSON object, got {type(value).__name__}"
+        )
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,10 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="litellm model id, e.g. anthropic/claude-opus-4-8 or gpt-...",
     )
-    run.add_argument("--runs", type=int, default=1, help="episodes to run (default 1)")
+    run.add_argument(
+        "--runs", type=_positive_int, default=1, help="episodes to run (default 1)"
+    )
     run.add_argument("--out", default="runs", help="output directory (default runs/)")
     run.add_argument(
         "--sampling",
+        type=_sampling_dict,
         default=None,
         help='JSON dict passed to litellm.completion verbatim, e.g. \'{"temperature": 0}\'',
     )
@@ -47,14 +71,21 @@ def main(argv: "list[str] | None" = None) -> int:
 
     # Imported here, not at module top: the CLI is the only piece that needs
     # litellm, and the error message tells the user exactly what to install.
-    from a320_bench.providers.litellm_adapter import LiteLLMAdapter
+    try:
+        from a320_bench.providers.litellm_adapter import LiteLLMAdapter
+    except ImportError as exc:
+        print(f"a320-bench: {exc}", file=sys.stderr)
+        return 2
 
-    scenario = load_scenario(args.scenario)
-    sampling = json.loads(args.sampling) if args.sampling else None
+    try:
+        scenario = load_scenario(args.scenario)
+    except ScenarioError as exc:
+        print(f"a320-bench: {exc}", file=sys.stderr)
+        return 2
 
     failures = 0
     for i in range(args.runs):
-        adapter = LiteLLMAdapter(args.model, sampling=sampling)
+        adapter = LiteLLMAdapter(args.model, sampling=args.sampling)
         result = asyncio.run(run_episode(scenario, adapter, args.out))
         verdict = (
             "INVALID"
