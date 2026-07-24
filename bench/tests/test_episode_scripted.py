@@ -171,6 +171,37 @@ def test_script_exhaustion_is_end_turn_without_done_after_one_nudge():
     assert len(empty_turns) == 2
 
 
+def test_second_scenario_eng1_gen_fault_scripted_procedure():
+    """The ENG 1 GEN scenario resolves under its scripted procedure (#72).
+
+    The interesting half of this scenario is restraint — the network never
+    sags (bus tie feeds AC 1 from GEN 2) and the engines must be left alone —
+    so the success predicates include both engines still running.
+    """
+    scenario_path = REPO_ROOT / "scenarios" / "elec" / "eng1_gen_fault.yaml"
+    script = [
+        [("read_ecam", {})],
+        [("set_control", {"control": "gen_1", "value": 0}), ("advance", {"seconds": 2})],
+        [("set_control", {"control": "gen_1", "value": 1}), ("advance", {"seconds": 2})],
+        [("read_ecam", {})],  # caution back: reset unsuccessful
+        [("set_control", {"control": "gen_1", "value": 0}), ("advance", {"seconds": 3})],
+        [("read_ecam", {})],
+        [("report_done", {"diagnosis": "ENG 1 generator failed; reset unsuccessful, isolated",
+                          "actions_summary": "GEN 1 off/on reset, then GEN 1 off; network on GEN 2 via bus tie"})],
+    ]
+    result, records = _run(script, scenario_path=scenario_path)
+
+    assert result.reason == "agent_done"
+    assert result.all_passed is True
+    final = records[-1]
+    assert "ENG 1 GEN FAULT" not in final["ecam"]
+    assert final["active_failures"] == ["elec.gen.1"], "managed, not repaired"
+    engine_checks = {
+        c["var"]: c["passed"] for c in final["success_eval"]["final_state"]
+    }
+    assert engine_checks["ENGINE_STATE:1"] and engine_checks["ENGINE_STATE:2"]
+
+
 def test_malformed_report_done_is_an_error_and_does_not_end_the_episode():
     """report_done with missing args is a recorded error, not an episode end.
 
